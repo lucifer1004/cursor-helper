@@ -1,0 +1,8 @@
+{
+  "clause_id": "C-VISION",
+  "title": "Project Vision",
+  "kind": "informative",
+  "status": "active",
+  "text": "**cursor-helper** is a Rust CLI that exposes power-user functionality for Cursor IDE—operations that the IDE does not directly surface but are essential for professional workflows.\n\nThe project exists because Cursor stores rich metadata (chat history, workspace state, project associations) in scattered locations with non-obvious formats. Moving, renaming, or reorganizing projects breaks this hidden state. This CLI provides robust tools to perform such operations while preserving all associated data.\n\n**Target users:** Developers who:\n- Reorganize their project directories\n- Work across multiple machines or sync setups\n- Need to recover or migrate Cursor workspace data\n- Want programmatic access to Cursor's internal state",
+  "since": "0.1.0"
+}

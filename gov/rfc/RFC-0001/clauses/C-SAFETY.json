@@ -1,0 +1,8 @@
+{
+  "clause_id": "C-SAFETY",
+  "title": "Safety and Data Integrity",
+  "kind": "normative",
+  "status": "active",
+  "text": "All commands that modify data MUST follow these safety rules:\n\n## Dry-Run by Default\n\nDestructive operations MUST default to dry-run mode:\n\n- `clean --dry-run` shows what would be deleted\n- No changes are made without explicit confirmation\n\n## Confirmation Required\n\nBefore executing destructive operations:\n\n```\n$ cursor-helper clean\nFound 3 orphaned workspaces:\n  /Users/foo/.cursor/workspaceStorage/abc123\n  /Users/foo/.cursor/workspaceStorage/def456\n  /Users/foo/.cursor/workspaceStorage/ghi789\n\nWould delete 3 items. Use --yes to confirm.\n```\n\nThe `--yes` flag bypasses the confirmation prompt.\n\n## Atomic Operations\n\nCommands that modify multiple files MUST be atomic where possible:\n\n- Use `rename` operations, not `copy-then-delete`\n- If atomicity is not possible, provide rollback information\n\n## Backup Before Modifications\n\nFor `rename` and `clone`:\n\n1. Command MUST warn if target already exists\n2. Command SHOULD recommend `backup` first for important projects\n3. On conflict, abort with clear error rather than partial overwrite\n\n## Data Validation\n\nBefore any write operation:\n\n1. Verify source data exists and is readable\n2. Verify target location is accessible\n3. Verify sufficient disk space for the operation\n4. On failure, leave source data unchanged\n\n## Error Messages\n\nError messages MUST:\n\n- Be human-readable, not raw error codes\n- Suggest remediation when possible\n- Distinguish between \"user error\" (wrong input) and \"system error\" (IO failure)",
+  "since": "0.1.0"
+}

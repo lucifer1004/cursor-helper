@@ -1,0 +1,18 @@
+[govctl]
+schema = 1
+id = "WI-2026-01-19-003"
+title = "fix pre-publish issues"
+status = "done"
+created = "2026-01-19"
+started = "2026-01-19"
+completed = "2026-01-19"
+
+[content]
+description = """
+Describe the work to be done.
+What is the goal? What are the acceptance criteria?"""
+
+[[content.acceptance_criteria]]
+text = "Pre-publish issues fixed"
+status = "done"
+category = "added"

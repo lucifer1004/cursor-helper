@@ -1,0 +1,37 @@
+{
+  "rfc_id": "RFC-0000",
+  "title": "cursor-helper: CLI for Cursor IDE power users",
+  "version": "0.1.0",
+  "status": "normative",
+  "phase": "stable",
+  "owners": ["@Gabriel Wu"],
+  "created": "2026-01-19",
+  "updated": "2026-01-19",
+  "sections": [
+    {
+      "title": "Summary"
+    },
+    {
+      "title": "Specification"
+    },
+    {
+      "title": "Overview",
+      "clauses": [
+        "clauses/C-VISION.json",
+        "clauses/C-SCOPE.json",
+        "clauses/C-NONGOALS.json"
+      ]
+    },
+    {
+      "title": "Design",
+      "clauses": ["clauses/C-PRINCIPLES.json"]
+    }
+  ],
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "date": "2026-01-19",
+      "notes": "Initial draft"
+    }
+  ]
+}

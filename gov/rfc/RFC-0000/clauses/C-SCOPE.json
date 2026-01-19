@@ -1,0 +1,8 @@
+{
+  "clause_id": "C-SCOPE",
+  "title": "Scope and Goals",
+  "kind": "normative",
+  "status": "active",
+  "text": "The project MUST:\n\n1. **Preserve user data** — Never lose chat history, workspace state, or project associations\n2. **Support project rename/move** — Migrate all Cursor metadata when project paths change\n3. **Be cross-platform** — Work on macOS, Linux, and Windows\n4. **Handle edge cases** — Symlinks, special characters, non-ASCII paths, relative paths\n5. **Provide clear feedback** — Show what will change before making changes\n\nThe project SHOULD:\n\n1. **Support backup/restore** — Export and import Cursor project state\n2. **Support cleanup** — Remove orphaned metadata for deleted projects\n3. **Provide inspection tools** — Query Cursor's internal state for debugging",
+  "since": "0.1.0"
+}

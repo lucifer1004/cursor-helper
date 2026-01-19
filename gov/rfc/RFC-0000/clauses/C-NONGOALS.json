@@ -1,0 +1,8 @@
+{
+  "clause_id": "C-NONGOALS",
+  "title": "Non-Goals",
+  "kind": "normative",
+  "status": "active",
+  "text": "The project MUST NOT:\n\n1. **Modify Cursor's behavior** — We only manipulate stored data, not the application itself\n2. **Require Cursor to be closed** — Operations SHOULD be safe while Cursor is running (with appropriate warnings)\n3. **Depend on undocumented APIs** — We rely on file formats, not internal APIs that may break\n4. **Replace Cursor functionality** — We supplement, not substitute\n\nThe project is NOT:\n\n- A Cursor plugin or extension\n- A general-purpose IDE data migration tool\n- A backup solution for user code (only Cursor metadata)",
+  "since": "0.1.0"
+}

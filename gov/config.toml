@@ -1,0 +1,11 @@
+[project]
+name = "my-project"
+# Default owner for new RFCs (uses git user.name if not set)
+# default_owner = "@your-handle"
+
+[paths]
+gov_root = "gov"
+docs_output = "docs"
+
+[schema]
+version = 1

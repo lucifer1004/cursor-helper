@@ -1,0 +1,62 @@
+[govctl]
+schema = 1
+id = "WI-2026-01-19-002"
+title = "Implement RFC-0001 feature commands"
+status = "done"
+created = "2026-01-19"
+started = "2026-01-19"
+completed = "2026-01-19"
+refs = ["RFC-0001"]
+
+[content]
+description = "Implement Phase 1 commands from RFC-0001: list and stats. These read-only commands provide project discovery and usage statistics."
+
+[[content.acceptance_criteria]]
+text = "Implement cursor-helper list command"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "Implement cursor-helper stats command"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "Implement cursor-helper export-chat command"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "Implement cursor-helper clean command"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "Implement cursor-helper backup command"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "Implement cursor-helper restore command"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "Implement cursor-helper clone command"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "Chat count column displays actual counts instead of dashes"
+status = "done"
+category = "fixed"
+
+[[content.acceptance_criteria]]
+text = "List command supports sorting options (--sort)"
+status = "done"
+category = "changed"
+
+[[content.acceptance_criteria]]
+text = "List command supports filtering options (--filter)"
+status = "done"
+category = "added"

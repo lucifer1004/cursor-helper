@@ -1,0 +1,53 @@
+[package]
+name = "cursor-helper"
+version = "0.1.0"
+edition = "2021"
+description = "CLI helper for Cursor IDE operations not exposed in the UI"
+license = "MIT"
+repository = "https://github.com/lucifer1004/cursor-helper"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Hashing
+md5 = "0.8"
+
+# Paths and directories
+dirs = "6"
+fs_extra = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# SQLite
+rusqlite = { version = "0.38", features = ["bundled"] }
+
+# URL encoding
+url = "2"
+percent-encoding = "2"
+
+# Colored output
+owo-colors = "4"
+
+# Date/time formatting
+chrono = "0.4"
+
+# Table formatting
+comfy-table = "7"
+
+# Archive support
+flate2 = "1"
+tar = "0.4"
+walkdir = "2"
+tempfile = "3"
+
+# UUID generation
+uuid = { version = "1", features = ["v4"] }
+
+# No dev-dependencies currently required

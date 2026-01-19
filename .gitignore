@@ -1,0 +1,4 @@
+target/
+.env
+.claude/settings.local.json
+*.tar.gz

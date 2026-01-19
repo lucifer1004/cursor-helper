@@ -1,0 +1,32 @@
+[govctl]
+schema = 1
+id = "WI-2026-01-19-001"
+title = "Write meta-RFC for cursor-helper project"
+status = "done"
+created = "2026-01-19"
+started = "2026-01-19"
+completed = "2026-01-19"
+refs = ["RFC-0000"]
+
+[content]
+description = "Create RFC-0000 defining cursor-helper's vision, scope, non-goals, and design principles as the foundational governance document."
+
+[[content.acceptance_criteria]]
+text = "Create RFC-0000 meta-RFC defining project vision"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "Define scope and goals of cursor-helper CLI"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "Document implemented and planned commands"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "govctl check passes"
+status = "done"
+category = "chore"

@@ -1,0 +1,8 @@
+{
+  "clause_id": "C-PRINCIPLES",
+  "title": "Design Principles",
+  "kind": "normative",
+  "status": "active",
+  "text": "## Data Structure First\n\nUnderstand Cursor's data model before writing code:\n\n- **Folder ID**: Path slug (`/Users/foo/bar` → `Users-foo-bar`)\n- **Workspace Hash**: `MD5(absolutePath + Math.round(birthtimeMs))`\n- **Storage locations**: `~/.cursor/projects/`, `~/Library/Application Support/Cursor/User/workspaceStorage/`, `globalStorage/`\n\n## Path Handling\n\nPaths MUST be handled exactly as Cursor records them:\n\n- Do NOT resolve symlinks (Cursor stores literal paths)\n- Clean `.` and `..` components without filesystem resolution\n- Preserve the path string Cursor originally used\n\n## Fail-Safe Operations\n\n1. **Validate before mutate** — Check all preconditions before modifying anything\n2. **Atomic where possible** — Use rename operations, not copy-then-delete\n3. **Backup on conflict** — If target exists, require explicit confirmation or backup\n4. **Reversible** — Operations SHOULD be reversible or provide undo information\n\n## Minimal Dependencies\n\n- Prefer stdlib over external crates\n- Each dependency is a liability for cross-platform builds\n- Heavy dependencies (async runtimes, web frameworks) are forbidden",
+  "since": "0.1.0"
+}
