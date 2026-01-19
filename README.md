@@ -1,6 +1,7 @@
 # cursor-helper
 
 <p align="center">
+  <a href="https://crates.io/crates/cursor-helper"><img src="https://img.shields.io/crates/v/cursor-helper.svg" alt="crates.io"></a>
   <a href="https://github.com/lucifer1004/cursor-helper/actions/workflows/ci.yml"><img src="https://github.com/lucifer1004/cursor-helper/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://github.com/govctl-org/govctl"><img src="https://img.shields.io/badge/governed%20by-govctl-6366F1" alt="governed by govctl"></a>
@@ -23,13 +24,18 @@ Your chat history, workspace settings, and MCP cache stay intact.
 ## Installation
 
 ```bash
-# From source
+# From crates.io (recommended)
+cargo install cursor-helper
+
+# Or from source
 git clone https://github.com/lucifer1004/cursor-helper
 cd cursor-helper
 cargo install --path .
 ```
 
 Requires Rust 1.70+. Works on macOS, Linux, and Windows.
+
+Pre-built binaries for major platforms are available on the [Releases](https://github.com/lucifer1004/cursor-helper/releases) page.
 
 ## Key Commands
 
