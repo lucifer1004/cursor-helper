@@ -5,23 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Workspace hash matches Cursor's stored hash on Windows (WI-2026-01-23-002)
+- list command runs without error for multi-root workspaces (WI-2026-01-23-001)
+
 ## [0.1.0] - 2026-01-19
 
 ### Added
 
-- `rename` command: Rename/move projects while preserving chat history
-- `list` command: List all Cursor projects with sorting and filtering
-- `stats` command: Show usage statistics for a project
-- `export-chat` command: Export chat history to Markdown or JSON
-  - Includes thinking blocks, tool calls, and token counts
-  - `--include-archived` flag for archived sessions
-- `clean` command: Remove orphaned workspace storage
-- `backup` command: Backup Cursor metadata for a project
-- `restore` command: Restore metadata from a backup
-- `clone` command: Clone a project with full chat history
+- Create RFC-0000 meta-RFC defining project vision (WI-2026-01-19-001)
+- Define scope and goals of cursor-helper CLI (WI-2026-01-19-001)
+- Document implemented and planned commands (WI-2026-01-19-001)
+- Implement cursor-helper list command (WI-2026-01-19-002)
+- Implement cursor-helper stats command (WI-2026-01-19-002)
+- Implement cursor-helper export-chat command (WI-2026-01-19-002)
+- Implement cursor-helper clean command (WI-2026-01-19-002)
+- Implement cursor-helper backup command (WI-2026-01-19-002)
+- Implement cursor-helper restore command (WI-2026-01-19-002)
+- Implement cursor-helper clone command (WI-2026-01-19-002)
+- List command supports sorting options (--sort) (WI-2026-01-19-002)
+- List command supports filtering options (--filter) (WI-2026-01-19-002)
 
-### Notes
+### Fixed
 
-- Linux support is experimental; workspace hash computation may not match Cursor's
-  internal hash on some filesystems. The tool will search for existing workspaces
-  as a fallback.
+- Chat count column displays actual counts instead of dashes (WI-2026-01-19-002)
+- Pre-publish issues fixed (WI-2026-01-19-003)

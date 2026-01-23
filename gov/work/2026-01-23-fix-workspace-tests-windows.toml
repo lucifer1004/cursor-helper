@@ -1,0 +1,16 @@
+[govctl]
+schema = 1
+id = "WI-2026-01-23-003"
+title = "fix-workspace-tests-windows"
+status = "done"
+created = "2026-01-23"
+started = "2026-01-23"
+completed = "2026-01-23"
+
+[content]
+description = "Fix workspace tests that fail on Windows due to Unix path format"
+
+[[content.acceptance_criteria]]
+text = "Tests pass on Windows"
+status = "done"
+category = "chore"

@@ -297,21 +297,23 @@ fn normalize_path(path: &str) -> Result<PathBuf> {
 /// Resolves . and .. WITHOUT following symlinks
 fn normalize_new_path(path: &str) -> Result<PathBuf> {
     let path = PathBuf::from(path);
-    let parent = path.parent().context("New path has no parent directory")?;
     let name = path.file_name().context("New path has no file name")?;
 
-    if !parent.exists() {
-        bail!("Parent directory does not exist: {}", parent.display());
-    }
-
-    // Make absolute and clean . and .. without following symlinks
-    let abs_parent = if parent.is_absolute() {
+    // Get parent, treating empty parent as current directory
+    let parent = path.parent().context("New path has no parent directory")?;
+    let parent = if parent.as_os_str().is_empty() {
+        std::env::current_dir()?
+    } else if parent.is_absolute() {
         parent.to_path_buf()
     } else {
         std::env::current_dir()?.join(parent)
     };
 
-    Ok(clean_path(&abs_parent).join(name))
+    if !parent.exists() {
+        bail!("Parent directory does not exist: {}", parent.display());
+    }
+
+    Ok(clean_path(&parent).join(name))
 }
 
 /// Clean a path by resolving . and .. components without following symlinks

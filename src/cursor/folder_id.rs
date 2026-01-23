@@ -23,7 +23,11 @@ use std::path::Path;
 pub fn path_to_folder_id<P: AsRef<Path>>(path: P) -> String {
     let path_str = path.as_ref().to_string_lossy();
 
-    // Replace / and . with -, then collapse consecutive dashes
+    // Replace path separators and dots with -, then collapse consecutive dashes
+    // On Windows, also replace \ and : (from drive letters like C:)
+    #[cfg(windows)]
+    let slugified = path_str.replace(['/', '\\', '.', ':'], "-");
+    #[cfg(not(windows))]
     let slugified = path_str.replace(['/', '.'], "-");
 
     // Collapse consecutive dashes and trim
@@ -89,5 +93,24 @@ mod tests {
     fn test_multiple_dots() {
         // Multiple consecutive dots/slashes collapse
         assert_eq!(path_to_folder_id("/Users/me/../foo"), "Users-me-foo");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_windows_path() {
+        // Windows paths with backslashes and drive letters
+        assert_eq!(
+            path_to_folder_id("C:\\com.github\\lucifer1004\\cursor-helper"),
+            "C-com-github-lucifer1004-cursor-helper"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_windows_path_with_dots() {
+        assert_eq!(
+            path_to_folder_id("D:\\Users\\me\\.config\\app"),
+            "D-Users-me-config-app"
+        );
     }
 }

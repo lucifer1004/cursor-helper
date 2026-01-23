@@ -1,0 +1,16 @@
+[govctl]
+schema = 1
+id = "WI-2026-01-23-002"
+title = "fix-windows-rename-command"
+status = "done"
+created = "2026-01-23"
+started = "2026-01-23"
+completed = "2026-01-23"
+
+[content]
+description = "Fix rename/copy command on Windows: workspace hash computation doesn't match what Cursor uses"
+
+[[content.acceptance_criteria]]
+text = "Workspace hash matches Cursor's stored hash on Windows"
+status = "done"
+category = "fixed"

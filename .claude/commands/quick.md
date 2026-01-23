@@ -29,8 +29,11 @@ if jj status >/dev/null 2>&1; then VCS="jj"; else VCS="git"; fi
 
 ```bash
 govctl work new --active "<concise-title>"
-govctl work add <WI-ID> acceptance_criteria "Change completed"
+govctl work add <WI-ID> acceptance_criteria "<type>: Change completed"
 ```
+
+Here `<type>` is one of: add, change, fix, remove, refactor, chore, docs, test, security.
+This follows the changelog category prefixes.
 
 ### 3. Implement
 
@@ -49,6 +52,9 @@ jj commit -m "<type>(<scope>): <description>"
 # git
 git add . && git commit -m "<type>(<scope>): <description>"
 ```
+
+Here `<type>` is one of: feat, fix, docs, test, refactor, chore, security.
+This follows the commit message prefixes.
 
 ### 5. Complete
 

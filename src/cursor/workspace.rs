@@ -22,7 +22,7 @@ use url::Url;
 /// The MD5 hash as a hex string
 pub fn compute_workspace_hash<P: AsRef<Path>>(path: P) -> Result<String> {
     let path = path.as_ref();
-    let path_str = path.to_string_lossy();
+    let path_str = normalize_path_for_hash(path);
 
     // Get file metadata to extract birth time
     let metadata = fs::metadata(path)
@@ -39,6 +39,24 @@ pub fn compute_workspace_hash<P: AsRef<Path>>(path: P) -> Result<String> {
     let hash = md5::compute(input.as_bytes());
 
     Ok(format!("{:x}", hash))
+}
+
+/// Normalize path for hash computation
+/// On Windows, Cursor uses lowercase drive letters (c: not C:)
+fn normalize_path_for_hash(path: &Path) -> String {
+    let path_str = path.to_string_lossy();
+
+    #[cfg(windows)]
+    {
+        // Lowercase the drive letter (C: -> c:)
+        if path_str.len() >= 2 && path_str.as_bytes()[1] == b':' {
+            let mut chars: Vec<char> = path_str.chars().collect();
+            chars[0] = chars[0].to_ascii_lowercase();
+            return chars.into_iter().collect();
+        }
+    }
+
+    path_str.into_owned()
 }
 
 /// Get birth time in milliseconds from file metadata
@@ -120,15 +138,57 @@ impl WorkspaceJson {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     #[test]
     fn test_workspace_json_new() {
         let ws = WorkspaceJson::new("/Users/me/projects/myapp").unwrap();
         assert_eq!(ws.folder, "file:///Users/me/projects/myapp");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn test_workspace_json_with_spaces() {
         let ws = WorkspaceJson::new("/Users/me/my project").unwrap();
         assert_eq!(ws.folder, "file:///Users/me/my%20project");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_workspace_json_new_windows() {
+        let ws = WorkspaceJson::new("C:\\Users\\me\\projects\\myapp").unwrap();
+        assert_eq!(ws.folder, "file:///C:/Users/me/projects/myapp");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_workspace_json_with_spaces_windows() {
+        let ws = WorkspaceJson::new("C:\\Users\\me\\my project").unwrap();
+        assert_eq!(ws.folder, "file:///C:/Users/me/my%20project");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_normalize_path_for_hash_windows() {
+        use std::path::Path;
+        // Windows: drive letter should be lowercased
+        assert_eq!(
+            normalize_path_for_hash(Path::new("C:\\com.github\\project")),
+            "c:\\com.github\\project"
+        );
+        assert_eq!(
+            normalize_path_for_hash(Path::new("D:\\Users\\me")),
+            "d:\\Users\\me"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_normalize_path_for_hash_unix() {
+        use std::path::Path;
+        // Unix: path unchanged
+        assert_eq!(
+            normalize_path_for_hash(Path::new("/Users/me/project")),
+            "/Users/me/project"
+        );
     }
 }

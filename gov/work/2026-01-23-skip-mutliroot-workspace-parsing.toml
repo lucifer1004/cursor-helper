@@ -1,0 +1,21 @@
+[govctl]
+schema = 1
+id = "WI-2026-01-23-001"
+title = "fix-windows-workspace-parsing"
+status = "done"
+created = "2026-01-23"
+started = "2026-01-23"
+completed = "2026-01-23"
+
+[content]
+description = "Skip multi-root workspaces in list command"
+
+[[content.acceptance_criteria]]
+text = "list command runs without error for multi-root workspaces"
+status = "done"
+category = "fixed"
+
+[[content.acceptance_criteria]]
+text = "just pre-commit runs on Windows"
+status = "done"
+category = "chore"

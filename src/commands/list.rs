@@ -109,10 +109,17 @@ pub fn list(workspace_storage_dir: PathBuf) -> Result<Vec<Project>> {
         let workspace: serde_json::Value = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse: {}", workspace_json_path.display()))?;
 
-        let folder_url = workspace
-            .get("folder")
-            .and_then(|v| v.as_str())
-            .context("workspace.json missing 'folder' field")?;
+        // workspace.json can have either:
+        // - "folder": single-folder project
+        // - "workspace": multi-root .code-workspace file
+        let folder_url = match workspace.get("folder").and_then(|v| v.as_str()) {
+            Some(url) => url,
+            None => {
+                // Multi-root workspace - skip for now (would need to parse .code-workspace)
+                // Could also use workspace.get("workspace") to show the workspace file
+                continue;
+            }
+        };
 
         // Parse folder URL
         let parsed = match parse_folder_url(folder_url) {
@@ -210,6 +217,7 @@ fn parse_folder_url(url_str: &str) -> Option<ParsedUrl> {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     #[test]
     fn test_parse_local_url() {
         let parsed = parse_folder_url("file:///Users/me/projects/myapp").unwrap();
@@ -217,10 +225,27 @@ mod tests {
         assert!(parsed.remote.is_none());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn test_parse_local_url_with_spaces() {
         let parsed = parse_folder_url("file:///Users/me/my%20project").unwrap();
         assert_eq!(parsed.path, PathBuf::from("/Users/me/my project"));
+        assert!(parsed.remote.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_parse_local_url_windows() {
+        let parsed = parse_folder_url("file:///C:/Users/me/projects/myapp").unwrap();
+        assert_eq!(parsed.path, PathBuf::from("C:\\Users\\me\\projects\\myapp"));
+        assert!(parsed.remote.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_parse_local_url_with_spaces_windows() {
+        let parsed = parse_folder_url("file:///C:/Users/me/my%20project").unwrap();
+        assert_eq!(parsed.path, PathBuf::from("C:\\Users\\me\\my project"));
         assert!(parsed.remote.is_none());
     }
 

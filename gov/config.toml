@@ -1,7 +1,6 @@
 [project]
-name = "my-project"
-# Default owner for new RFCs (uses git user.name if not set)
-# default_owner = "@your-handle"
+name = "cursor-helper"
+default_owner = "@lucifer1004"
 
 [paths]
 gov_root = "gov"

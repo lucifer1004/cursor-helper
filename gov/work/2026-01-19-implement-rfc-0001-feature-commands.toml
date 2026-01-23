@@ -54,7 +54,7 @@ category = "fixed"
 [[content.acceptance_criteria]]
 text = "List command supports sorting options (--sort)"
 status = "done"
-category = "changed"
+category = "added"
 
 [[content.acceptance_criteria]]
 text = "List command supports filtering options (--filter)"
