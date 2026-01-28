@@ -57,4 +57,58 @@ mod tests {
         let _ = workspace_storage_dir();
         let _ = global_storage_dir();
     }
+
+    #[test]
+    fn test_cursor_projects_dir_structure() {
+        let path = cursor_projects_dir().unwrap();
+        // Should end with .cursor/projects
+        let components: Vec<_> = path.components().collect();
+        let len = components.len();
+        assert!(len >= 2);
+        assert_eq!(
+            components[len - 1].as_os_str().to_string_lossy(),
+            "projects"
+        );
+        assert_eq!(components[len - 2].as_os_str().to_string_lossy(), ".cursor");
+    }
+
+    #[test]
+    fn test_workspace_storage_dir_structure() {
+        let path = workspace_storage_dir().unwrap();
+        // Should end with User/workspaceStorage
+        let components: Vec<_> = path.components().collect();
+        let len = components.len();
+        assert!(len >= 2);
+        assert_eq!(
+            components[len - 1].as_os_str().to_string_lossy(),
+            "workspaceStorage"
+        );
+        assert_eq!(components[len - 2].as_os_str().to_string_lossy(), "User");
+    }
+
+    #[test]
+    fn test_global_storage_dir_structure() {
+        let path = global_storage_dir().unwrap();
+        // Should end with User/globalStorage
+        let components: Vec<_> = path.components().collect();
+        let len = components.len();
+        assert!(len >= 2);
+        assert_eq!(
+            components[len - 1].as_os_str().to_string_lossy(),
+            "globalStorage"
+        );
+        assert_eq!(components[len - 2].as_os_str().to_string_lossy(), "User");
+    }
+
+    #[test]
+    fn test_paths_share_common_base() {
+        // workspace_storage_dir and global_storage_dir should share base up to User/
+        let ws = workspace_storage_dir().unwrap();
+        let gs = global_storage_dir().unwrap();
+
+        let ws_parent = ws.parent().unwrap();
+        let gs_parent = gs.parent().unwrap();
+
+        assert_eq!(ws_parent, gs_parent);
+    }
 }

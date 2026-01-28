@@ -200,5 +200,57 @@ fn add_dir_to_archive<W: Write>(
 
 #[cfg(test)]
 mod tests {
-    // Tests moved to utils module
+    use super::*;
+
+    #[test]
+    fn test_backup_manifest_serialization() {
+        let manifest = BackupManifest {
+            version: 1,
+            project_path: "/home/user/project".to_string(),
+            folder_id: "home-user-project".to_string(),
+            workspace_hash: "abc123def456".to_string(),
+            created_at: 1704067200,
+            includes: BackupContents {
+                workspace_storage: true,
+                projects_data: true,
+            },
+        };
+
+        // Should serialize to JSON without error
+        let json = serde_json::to_string(&manifest).unwrap();
+        assert!(json.contains("\"version\":1"));
+        assert!(json.contains("\"project_path\":\"/home/user/project\""));
+        assert!(json.contains("\"workspace_storage\":true"));
+    }
+
+    #[test]
+    fn test_backup_manifest_deserialization() {
+        let json = r#"{
+            "version": 1,
+            "project_path": "/test/path",
+            "folder_id": "test-path",
+            "workspace_hash": "hash123",
+            "created_at": 1704067200,
+            "includes": {
+                "workspace_storage": true,
+                "projects_data": false
+            }
+        }"#;
+
+        let manifest: BackupManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.version, 1);
+        assert_eq!(manifest.project_path, "/test/path");
+        assert!(manifest.includes.workspace_storage);
+        assert!(!manifest.includes.projects_data);
+    }
+
+    #[test]
+    fn test_backup_contents_default() {
+        let contents = BackupContents {
+            workspace_storage: false,
+            projects_data: false,
+        };
+        assert!(!contents.workspace_storage);
+        assert!(!contents.projects_data);
+    }
 }

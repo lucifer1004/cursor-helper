@@ -407,4 +407,68 @@ mod tests {
         assert_eq!(remote.remote_type, RemoteType::DevContainer);
         assert_eq!(remote.name, "win11-wsl");
     }
+
+    #[test]
+    fn test_parse_wsl_url() {
+        let parsed = parse_folder_url("vscode-remote://wsl+Ubuntu/home/user/project").unwrap();
+        assert_eq!(parsed.path, PathBuf::from("/home/user/project"));
+        let remote = parsed.remote.unwrap();
+        assert_eq!(remote.remote_type, RemoteType::Wsl);
+        assert_eq!(remote.name, "Ubuntu");
+    }
+
+    #[test]
+    fn test_parse_invalid_scheme() {
+        // Unknown scheme should return None
+        assert!(parse_folder_url("http://example.com/path").is_none());
+        assert!(parse_folder_url("ftp://server/path").is_none());
+    }
+
+    #[test]
+    fn test_parse_invalid_url() {
+        // Malformed URL should return None
+        assert!(parse_folder_url("not a url at all").is_none());
+    }
+
+    #[test]
+    fn test_remote_type_parse() {
+        assert_eq!(RemoteType::parse("tunnel"), RemoteType::Tunnel);
+        assert_eq!(RemoteType::parse("ssh-remote"), RemoteType::SshRemote);
+        assert_eq!(RemoteType::parse("dev-container"), RemoteType::DevContainer);
+        assert_eq!(RemoteType::parse("wsl"), RemoteType::Wsl);
+        assert_eq!(
+            RemoteType::parse("unknown-type"),
+            RemoteType::Unknown("unknown-type".to_string())
+        );
+    }
+
+    #[test]
+    fn test_remote_type_display() {
+        assert_eq!(format!("{}", RemoteType::Tunnel), "tunnel");
+        assert_eq!(format!("{}", RemoteType::SshRemote), "ssh");
+        assert_eq!(format!("{}", RemoteType::DevContainer), "container");
+        assert_eq!(format!("{}", RemoteType::Wsl), "wsl");
+        assert_eq!(
+            format!("{}", RemoteType::Unknown("custom".to_string())),
+            "custom"
+        );
+    }
+
+    #[test]
+    fn test_project_struct_fields() {
+        // Verify Project struct can be constructed with all fields
+        let project = Project {
+            folder_id: "abc123".to_string(),
+            path: PathBuf::from("/test/path"),
+            remote: Some(RemoteInfo {
+                remote_type: RemoteType::Tunnel,
+                name: "myserver".to_string(),
+            }),
+            last_modified: None,
+            chat_count: 5,
+        };
+        assert_eq!(project.folder_id, "abc123");
+        assert_eq!(project.chat_count, 5);
+        assert!(project.remote.is_some());
+    }
 }

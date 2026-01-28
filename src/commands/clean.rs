@@ -184,5 +184,31 @@ fn find_orphaned_workspaces(workspace_storage_dir: &PathBuf) -> Result<Vec<Orpha
 
 #[cfg(test)]
 mod tests {
-    // Tests moved to utils module
+    use super::*;
+
+    #[test]
+    fn test_orphaned_workspace_struct() {
+        let orphaned = OrphanedWorkspace {
+            storage_path: PathBuf::from("/path/to/storage"),
+            folder_url: "file:///old/project".to_string(),
+            size_bytes: 1024 * 1024, // 1 MB
+        };
+
+        assert_eq!(orphaned.storage_path, PathBuf::from("/path/to/storage"));
+        assert_eq!(orphaned.folder_url, "file:///old/project");
+        assert_eq!(orphaned.size_bytes, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_orphaned_workspace_debug() {
+        let orphaned = OrphanedWorkspace {
+            storage_path: PathBuf::from("/test"),
+            folder_url: "file:///test".to_string(),
+            size_bytes: 0,
+        };
+
+        // Should implement Debug
+        let debug_str = format!("{:?}", orphaned);
+        assert!(debug_str.contains("OrphanedWorkspace"));
+    }
 }

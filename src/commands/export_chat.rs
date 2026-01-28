@@ -869,4 +869,159 @@ mod tests {
         assert_eq!(ExportFormat::from_str("json"), Some(ExportFormat::Json));
         assert_eq!(ExportFormat::from_str("xml"), None);
     }
+
+    #[test]
+    fn test_export_format_case_insensitive() {
+        assert_eq!(ExportFormat::from_str("MD"), Some(ExportFormat::Markdown));
+        assert_eq!(ExportFormat::from_str("JSON"), Some(ExportFormat::Json));
+        assert_eq!(
+            ExportFormat::from_str("Markdown"),
+            Some(ExportFormat::Markdown)
+        );
+    }
+
+    #[test]
+    fn test_truncate_str_short() {
+        // String shorter than limit should be unchanged
+        assert_eq!(truncate_str("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_str_exact() {
+        // String exactly at limit should be unchanged
+        assert_eq!(truncate_str("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_str_long() {
+        // String longer than limit should be truncated
+        let result = truncate_str("hello world", 5);
+        assert!(result.starts_with("hello"));
+        assert!(result.ends_with("...[truncated]"));
+    }
+
+    #[test]
+    fn test_truncate_str_unicode() {
+        // Unicode characters should be handled correctly (char-safe)
+        let result = truncate_str("你好世界", 2);
+        assert!(result.starts_with("你好"));
+        assert!(result.ends_with("...[truncated]"));
+    }
+
+    #[test]
+    fn test_sanitize_filename_basic() {
+        assert_eq!(sanitize_filename("hello world"), "hello world");
+    }
+
+    #[test]
+    fn test_sanitize_filename_special_chars() {
+        // Special characters should be replaced with underscore
+        assert_eq!(
+            sanitize_filename("file/with:bad*chars"),
+            "file_with_bad_chars"
+        );
+        assert_eq!(sanitize_filename("test<>pipe|"), "test__pipe_");
+    }
+
+    #[test]
+    fn test_sanitize_filename_length_limit() {
+        // Long filenames should be truncated to 50 chars
+        let long_name = "a".repeat(100);
+        let result = sanitize_filename(&long_name);
+        assert_eq!(result.len(), 50);
+    }
+
+    #[test]
+    fn test_format_timestamp() {
+        // Known timestamp: 2024-01-01 00:00:00 UTC
+        let ts = 1704067200;
+        let result = format_timestamp(ts);
+        assert!(result.contains("2024-01-01"));
+        assert!(result.contains("UTC"));
+    }
+
+    #[test]
+    fn test_format_timestamp_zero() {
+        // Unix epoch
+        let result = format_timestamp(0);
+        assert!(result.contains("1970-01-01"));
+    }
+
+    #[test]
+    fn test_format_message_user() {
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: "Hello, world!".to_string(),
+            timestamp: None,
+            thinking_duration_ms: None,
+            tool_call: None,
+            model: None,
+            tokens: None,
+        };
+        let result = format_message_as_markdown(&msg, "##");
+        assert!(result.contains("## **User**"));
+        assert!(result.contains("Hello, world!"));
+    }
+
+    #[test]
+    fn test_format_message_assistant_with_model() {
+        let msg = ChatMessage {
+            role: "assistant".to_string(),
+            content: "I can help with that.".to_string(),
+            timestamp: None,
+            thinking_duration_ms: None,
+            tool_call: None,
+            model: Some("gpt-4".to_string()),
+            tokens: Some(TokenCount {
+                input: 100,
+                output: 50,
+            }),
+        };
+        let result = format_message_as_markdown(&msg, "###");
+        assert!(result.contains("### **Assistant**"));
+        assert!(result.contains("_gpt-4_"));
+        assert!(result.contains("100↓"));
+        assert!(result.contains("50↑"));
+    }
+
+    #[test]
+    fn test_format_message_thinking() {
+        let msg = ChatMessage {
+            role: "thinking".to_string(),
+            content: "Let me think about this...".to_string(),
+            timestamp: None,
+            thinking_duration_ms: Some(5000),
+            tool_call: None,
+            model: None,
+            tokens: None,
+        };
+        let result = format_message_as_markdown(&msg, "##");
+        assert!(result.contains("## 💭 **Thinking**"));
+        assert!(result.contains("_5.0s_"));
+        assert!(result.contains("<details>"));
+        assert!(result.contains("Let me think about this..."));
+    }
+
+    #[test]
+    fn test_format_message_tool() {
+        let msg = ChatMessage {
+            role: "tool".to_string(),
+            content: "[read_file]".to_string(),
+            timestamp: None,
+            thinking_duration_ms: None,
+            tool_call: Some(ToolCall {
+                name: "read_file".to_string(),
+                params: Some(r#"{"path": "/test.rs"}"#.to_string()),
+                result: Some("file contents...".to_string()),
+                status: Some("completed".to_string()),
+            }),
+            model: None,
+            tokens: None,
+        };
+        let result = format_message_as_markdown(&msg, "###");
+        assert!(result.contains("### 🔧 **Tool: read_file**"));
+        assert!(result.contains("[completed]"));
+        assert!(result.contains("Parameters"));
+        assert!(result.contains("Result"));
+    }
 }

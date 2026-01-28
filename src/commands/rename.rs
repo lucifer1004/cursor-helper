@@ -440,3 +440,66 @@ fn estimate_hash_after_move(old_path: &Path, new_path: &Path) -> Result<String> 
     let hash = md5::compute(input.as_bytes());
     Ok(format!("{:x}", hash))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clean_path_basic() {
+        let path = PathBuf::from("/home/user/project");
+        assert_eq!(clean_path(&path), PathBuf::from("/home/user/project"));
+    }
+
+    #[test]
+    fn test_clean_path_with_current_dir() {
+        // . components should be removed
+        let path = PathBuf::from("/home/./user/./project");
+        assert_eq!(clean_path(&path), PathBuf::from("/home/user/project"));
+    }
+
+    #[test]
+    fn test_clean_path_with_parent_dir() {
+        // .. should navigate up
+        let path = PathBuf::from("/home/user/../admin/project");
+        assert_eq!(clean_path(&path), PathBuf::from("/home/admin/project"));
+    }
+
+    #[test]
+    fn test_clean_path_complex() {
+        let path = PathBuf::from("/home/user/./foo/../bar/./baz/../qux");
+        assert_eq!(clean_path(&path), PathBuf::from("/home/user/bar/qux"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_clean_path_windows() {
+        let path = PathBuf::from(r"C:\Users\me\..\admin\project");
+        assert_eq!(clean_path(&path), PathBuf::from(r"C:\Users\admin\project"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_path_to_file_uri_unix() {
+        let path = PathBuf::from("/home/user/project");
+        let uri = path_to_file_uri(&path).unwrap();
+        assert_eq!(uri, "file:///home/user/project");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_path_to_file_uri_with_spaces() {
+        let path = PathBuf::from("/home/user/my project");
+        let uri = path_to_file_uri(&path).unwrap();
+        assert_eq!(uri, "file:///home/user/my%20project");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_path_to_file_uri_windows() {
+        let path = PathBuf::from(r"C:\Users\me\project");
+        let uri = path_to_file_uri(&path).unwrap();
+        assert!(uri.starts_with("file:///"));
+        assert!(uri.contains("Users"));
+    }
+}
