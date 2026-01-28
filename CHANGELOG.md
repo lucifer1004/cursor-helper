@@ -7,10 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-01-28
+
 ### Added
 
 - Export chat from remote sessions by path matching (WI-2026-01-28-001)
 - `--workspace-id` flag for direct workspace lookup (WI-2026-01-28-001)
+
+### Changed
+
+- Rename `--with-hash` to `--with-id` for consistency (WI-2026-01-28-002)
 
 ## [0.1.1] - 2026-01-23
 

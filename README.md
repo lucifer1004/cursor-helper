@@ -86,6 +86,9 @@ cursor-helper export-chat --workspace-id abc123def  # By workspace ID (from 'lis
 # List all projects (most recent first)
 cursor-helper list
 
+# Show workspace IDs (for use with export-chat --workspace-id)
+cursor-helper list --with-id
+
 # Sort by chat count
 cursor-helper list --sort chats --limit 10
 

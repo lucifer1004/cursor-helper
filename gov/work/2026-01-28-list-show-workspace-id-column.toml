@@ -1,0 +1,16 @@
+[govctl]
+schema = 1
+id = "WI-2026-01-28-002"
+title = "list-show-workspace-id-column"
+status = "done"
+created = "2026-01-28"
+started = "2026-01-28"
+completed = "2026-01-28"
+
+[content]
+description = "Display workspace ID column in list command for use with export-chat --workspace-id"
+
+[[content.acceptance_criteria]]
+text = "Rename `--with-hash` to `--with-id` for consistency"
+status = "done"
+category = "changed"

@@ -44,9 +44,9 @@ enum Commands {
 
     /// List all Cursor projects
     List {
-        /// Show workspace hash for each project
+        /// Show workspace ID for each project (use with export-chat --workspace-id)
         #[arg(long)]
-        with_hash: bool,
+        with_id: bool,
 
         /// Sort by: name, modified, chats (default: modified)
         #[arg(long, short, default_value = "modified")]
@@ -169,7 +169,7 @@ fn main() -> Result<()> {
         }
 
         Commands::List {
-            with_hash,
+            with_id,
             sort,
             reverse,
             filter,
@@ -223,8 +223,8 @@ fn main() -> Result<()> {
 
             // Build header
             let mut header = vec![];
-            if with_hash {
-                header.push(Cell::new("Hash"));
+            if with_id {
+                header.push(Cell::new("ID"));
             }
             header.push(Cell::new("Remote"));
             header.push(Cell::new("Path"));
@@ -251,7 +251,7 @@ fn main() -> Result<()> {
                     .unwrap_or_else(|| "-".to_string());
 
                 let mut row = vec![];
-                if with_hash {
+                if with_id {
                     row.push(Cell::new(&project.folder_id));
                 }
                 row.push(Cell::new(remote_str));
