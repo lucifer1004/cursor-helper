@@ -107,6 +107,14 @@ enum Commands {
         /// Include archived chat sessions
         #[arg(long)]
         include_archived: bool,
+
+        /// Split output into separate files per session (requires --output as directory)
+        #[arg(long)]
+        split: bool,
+
+        /// Exclude sessions with no messages
+        #[arg(long)]
+        exclude_blank: bool,
     },
 
     /// Remove orphaned workspace storage (projects that no longer exist)
@@ -285,6 +293,8 @@ fn main() -> Result<()> {
             with_stats,
             verbose,
             include_archived,
+            split,
+            exclude_blank,
         } => {
             let format = commands::export_chat::ExportFormat::from_str(&format)
                 .context("Invalid format. Use 'md' or 'json'")?;
@@ -293,15 +303,28 @@ fn main() -> Result<()> {
                 with_tools: with_tools || verbose,
                 with_stats: with_stats || verbose,
                 include_archived,
+                exclude_blank,
             };
 
             // Either project_path or workspace_id must be provided
             match (project_path, workspace_id) {
                 (Some(path), None) => {
-                    commands::export_chat::execute(&path, format, output.as_deref(), &options)?;
+                    commands::export_chat::execute(
+                        &path,
+                        format,
+                        output.as_deref(),
+                        &options,
+                        split,
+                    )?;
                 }
                 (None, Some(id)) => {
-                    commands::export_chat::execute_by_id(&id, format, output.as_deref(), &options)?;
+                    commands::export_chat::execute_by_id(
+                        &id,
+                        format,
+                        output.as_deref(),
+                        &options,
+                        split,
+                    )?;
                 }
                 (None, None) => {
                     anyhow::bail!("Either project_path or --workspace-id must be provided");

@@ -1,0 +1,32 @@
+[govctl]
+schema = 1
+id = "WI-2026-01-28-004"
+title = "export-chat-enhancements"
+status = "done"
+created = "2026-01-28"
+started = "2026-01-28"
+completed = "2026-01-28"
+
+[content]
+description = """
+Enhance export-chat command with `--split` flag for per-session file output and `--exclude-blank` flag to filter empty sessions. Fixed `count_chat_sessions` to count Composer sessions (matching export), fixing the 43 vs 37 discrepancy caused by orphaned old aichat UI references."""
+
+[[content.acceptance_criteria]]
+text = "--split flag for exporting sessions to separate files"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "--exclude-blank flag to filter empty sessions"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "count_chat_sessions now counts Composer sessions (consistent with export)"
+status = "done"
+category = "fixed"
+
+[[content.acceptance_criteria]]
+text = "All tests pass"
+status = "done"
+category = "chore"

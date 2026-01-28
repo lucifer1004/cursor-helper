@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use fs_extra::dir::{self, CopyOptions};
 use rusqlite::Connection;
-use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -46,6 +45,10 @@ pub fn copy_dir_contents(src: &Path, dst: &Path) -> Result<()> {
 }
 
 /// Count chat sessions in a workspace directory by querying state.vscdb
+///
+/// Counts Composer sessions from `composer.composerData` which contain actual
+/// exportable chat content. Previously counted old `workbench.panel.aichat.*`
+/// keys which are orphaned UI references without content.
 pub fn count_chat_sessions(workspace_dir: &Path) -> Result<usize> {
     let db_path = workspace_dir.join("state.vscdb");
 
@@ -60,27 +63,39 @@ pub fn count_chat_sessions(workspace_dir: &Path) -> Result<usize> {
     )
     .with_context(|| format!("Failed to open: {}", db_path.display()))?;
 
-    // Count unique chat session UUIDs from aichat panel keys
-    // Pattern: workbench.panel.aichat.{UUID}.*
-    let mut stmt = conn
-        .prepare("SELECT key FROM ItemTable WHERE key LIKE 'workbench.panel.aichat.%'")
-        .with_context(|| "Failed to prepare chat query")?;
+    // Get composer.composerData which contains the list of Composer sessions
+    let composer_data: Option<String> = conn
+        .query_row(
+            "SELECT value FROM ItemTable WHERE key = 'composer.composerData'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
 
-    let keys: Vec<String> = stmt
-        .query_map([], |row| row.get(0))
-        .with_context(|| "Failed to query chat sessions")?
-        .filter_map(|r| r.ok())
-        .collect();
+    let Some(data) = composer_data else {
+        return Ok(0);
+    };
 
-    // Extract unique UUIDs: "workbench.panel.aichat.{UUID}.something" -> UUID
-    let uuids: HashSet<_> = keys
-        .iter()
-        .filter_map(|key| key.strip_prefix("workbench.panel.aichat."))
-        .filter_map(|rest| rest.split('.').next())
-        .filter(|uuid| !uuid.is_empty())
-        .collect();
+    // Parse JSON to count sessions
+    let json: serde_json::Value = serde_json::from_str(&data)
+        .with_context(|| "Failed to parse composer.composerData")?;
 
-    Ok(uuids.len())
+    let count = json
+        .get("allComposers")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|c| {
+                    // Count non-archived sessions (consistent with default export behavior)
+                    !c.get("isArchived")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                })
+                .count()
+        })
+        .unwrap_or(0);
+
+    Ok(count)
 }
 
 /// Calculate total size of a directory

@@ -53,6 +53,8 @@ pub struct ExportOptions {
     pub with_stats: bool,
     /// Include archived chat sessions
     pub include_archived: bool,
+    /// Exclude sessions with no messages
+    pub exclude_blank: bool,
 }
 
 /// Tool call information
@@ -137,6 +139,7 @@ pub fn execute(
     format: ExportFormat,
     output: Option<&str>,
     options: &ExportOptions,
+    split: bool,
 ) -> Result<()> {
     let project_path = PathBuf::from(project_path);
 
@@ -179,7 +182,17 @@ pub fn execute(
     };
 
     // Extract chat sessions
-    let sessions = extract_chat_sessions(&workspace_dir, options)?;
+    let mut sessions = extract_chat_sessions(&workspace_dir, options)?;
+
+    // Filter blank sessions if requested
+    if options.exclude_blank {
+        let before = sessions.len();
+        sessions.retain(|s| !s.messages.is_empty());
+        let filtered = before - sessions.len();
+        if filtered > 0 {
+            println!("Filtered {} blank session(s)", filtered);
+        }
+    }
 
     if sessions.is_empty() {
         println!("No chat sessions found for this project.");
@@ -188,29 +201,41 @@ pub fn execute(
 
     println!("Found {} chat session(s)", sessions.len());
 
-    // Build export
-    let export = ChatExport {
-        project_path: project_path.to_string_lossy().to_string(),
-        exported_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0),
-        sessions,
-    };
+    let project_path_str = project_path.to_string_lossy().to_string();
+    let exported_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
 
-    // Format output
-    let content = match format {
-        ExportFormat::Markdown => format_as_markdown(&export),
-        ExportFormat::Json => serde_json::to_string_pretty(&export)?,
-    };
+    // Handle split output
+    if split {
+        let output_dir = output.ok_or_else(|| {
+            anyhow::anyhow!("--split requires --output to specify the output directory")
+        })?;
 
-    // Write or print
-    if let Some(output_path) = output {
-        fs::write(output_path, &content)
-            .with_context(|| format!("Failed to write: {}", output_path))?;
-        println!("Exported to: {}", output_path);
+        write_split_output(&sessions, output_dir, format, &project_path_str, exported_at)?;
     } else {
-        println!("{}", content);
+        // Build single export
+        let export = ChatExport {
+            project_path: project_path_str,
+            exported_at,
+            sessions,
+        };
+
+        // Format output
+        let content = match format {
+            ExportFormat::Markdown => format_as_markdown(&export),
+            ExportFormat::Json => serde_json::to_string_pretty(&export)?,
+        };
+
+        // Write or print
+        if let Some(output_path) = output {
+            fs::write(output_path, &content)
+                .with_context(|| format!("Failed to write: {}", output_path))?;
+            println!("Exported to: {}", output_path);
+        } else {
+            println!("{}", content);
+        }
     }
 
     Ok(())
@@ -225,6 +250,7 @@ pub fn execute_by_id(
     format: ExportFormat,
     output: Option<&str>,
     options: &ExportOptions,
+    split: bool,
 ) -> Result<()> {
     let workspace_storage_dir = crate::config::workspace_storage_dir()?;
     let workspace_dir = workspace_storage_dir.join(workspace_id);
@@ -253,7 +279,17 @@ pub fn execute_by_id(
     };
 
     // Extract chat sessions
-    let sessions = extract_chat_sessions(&workspace_dir, options)?;
+    let mut sessions = extract_chat_sessions(&workspace_dir, options)?;
+
+    // Filter blank sessions if requested
+    if options.exclude_blank {
+        let before = sessions.len();
+        sessions.retain(|s| !s.messages.is_empty());
+        let filtered = before - sessions.len();
+        if filtered > 0 {
+            println!("Filtered {} blank session(s)", filtered);
+        }
+    }
 
     if sessions.is_empty() {
         println!("No chat sessions found for this workspace.");
@@ -262,29 +298,40 @@ pub fn execute_by_id(
 
     println!("Found {} chat session(s)", sessions.len());
 
-    // Build export
-    let export = ChatExport {
-        project_path,
-        exported_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0),
-        sessions,
-    };
+    let exported_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
 
-    // Format output
-    let content = match format {
-        ExportFormat::Markdown => format_as_markdown(&export),
-        ExportFormat::Json => serde_json::to_string_pretty(&export)?,
-    };
+    // Handle split output
+    if split {
+        let output_dir = output.ok_or_else(|| {
+            anyhow::anyhow!("--split requires --output to specify the output directory")
+        })?;
 
-    // Write or print
-    if let Some(output_path) = output {
-        fs::write(output_path, &content)
-            .with_context(|| format!("Failed to write: {}", output_path))?;
-        println!("Exported to: {}", output_path);
+        write_split_output(&sessions, output_dir, format, &project_path, exported_at)?;
     } else {
-        println!("{}", content);
+        // Build single export
+        let export = ChatExport {
+            project_path,
+            exported_at,
+            sessions,
+        };
+
+        // Format output
+        let content = match format {
+            ExportFormat::Markdown => format_as_markdown(&export),
+            ExportFormat::Json => serde_json::to_string_pretty(&export)?,
+        };
+
+        // Write or print
+        if let Some(output_path) = output {
+            fs::write(output_path, &content)
+                .with_context(|| format!("Failed to write: {}", output_path))?;
+            println!("Exported to: {}", output_path);
+        } else {
+            println!("{}", content);
+        }
     }
 
     Ok(())
@@ -697,6 +744,146 @@ fn format_as_markdown(export: &ChatExport) -> String {
         }
 
         md.push_str("---\n\n");
+    }
+
+    md
+}
+
+/// Write sessions to separate files in a directory
+fn write_split_output(
+    sessions: &[ChatSession],
+    output_dir: &str,
+    format: ExportFormat,
+    project_path: &str,
+    exported_at: i64,
+) -> Result<()> {
+    // Create output directory
+    fs::create_dir_all(output_dir)
+        .with_context(|| format!("Failed to create directory: {}", output_dir))?;
+
+    let ext = match format {
+        ExportFormat::Markdown => "md",
+        ExportFormat::Json => "json",
+    };
+
+    for (i, session) in sessions.iter().enumerate() {
+        let title = session.title.as_deref().unwrap_or("Untitled");
+        let safe_title = sanitize_filename(title);
+        let filename = format!("{:03}-{}.{}", i + 1, safe_title, ext);
+        let file_path = Path::new(output_dir).join(&filename);
+
+        let content = match format {
+            ExportFormat::Markdown => format_single_session_as_markdown(session, i + 1),
+            ExportFormat::Json => {
+                let single_export = ChatExport {
+                    project_path: project_path.to_string(),
+                    exported_at,
+                    sessions: vec![session.clone()],
+                };
+                serde_json::to_string_pretty(&single_export)?
+            }
+        };
+
+        fs::write(&file_path, &content)
+            .with_context(|| format!("Failed to write: {}", file_path.display()))?;
+    }
+
+    println!(
+        "Exported {} sessions to directory: {}",
+        sessions.len(),
+        output_dir
+    );
+
+    Ok(())
+}
+
+/// Sanitize a string for use as a filename
+fn sanitize_filename(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .take(50) // Limit filename length
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Format a single session as markdown (for split output)
+fn format_single_session_as_markdown(session: &ChatSession, index: usize) -> String {
+    let mut md = String::new();
+
+    let title = session.title.as_deref().unwrap_or("Untitled Session");
+    md.push_str(&format!("# Session {}: {}\n\n", index, title));
+
+    if let Some(created) = session.created_at {
+        md.push_str(&format!("_Created: {}_\n\n", format_timestamp(created)));
+    }
+
+    md.push_str("---\n\n");
+
+    for msg in &session.messages {
+        match msg.role.as_str() {
+            "thinking" => {
+                md.push_str("## 💭 **Thinking**");
+                if let Some(duration) = msg.thinking_duration_ms {
+                    md.push_str(&format!(" _{:.1}s_", duration as f64 / 1000.0));
+                }
+                md.push_str("\n\n");
+                md.push_str("<details>\n<summary>Click to expand thinking...</summary>\n\n");
+                md.push_str(&msg.content);
+                md.push_str("\n\n</details>\n\n");
+            }
+            "tool" => {
+                if let Some(ref tc) = msg.tool_call {
+                    md.push_str(&format!("## 🔧 **Tool: {}**", tc.name));
+                    if let Some(ref status) = tc.status {
+                        md.push_str(&format!(" [{}]", status));
+                    }
+                    md.push_str("\n\n");
+
+                    if let Some(ref params) = tc.params {
+                        md.push_str("<details>\n<summary>Parameters</summary>\n\n```json\n");
+                        md.push_str(params);
+                        md.push_str("\n```\n\n</details>\n\n");
+                    }
+
+                    if let Some(ref result) = tc.result {
+                        md.push_str("<details>\n<summary>Result</summary>\n\n```\n");
+                        md.push_str(result);
+                        md.push_str("\n```\n\n</details>\n\n");
+                    }
+                }
+            }
+            _ => {
+                let role_display = match msg.role.as_str() {
+                    "user" => "**User**",
+                    "assistant" => "**Assistant**",
+                    "system" => "**System**",
+                    other => other,
+                };
+
+                md.push_str(&format!("## {}", role_display));
+
+                // Add model info if present
+                if let Some(ref model) = msg.model {
+                    md.push_str(&format!(" _{}_", model));
+                }
+
+                // Add token count if present
+                if let Some(ref tokens) = msg.tokens {
+                    if tokens.input > 0 || tokens.output > 0 {
+                        md.push_str(&format!(" ({}↓ {}↑)", tokens.input, tokens.output));
+                    }
+                }
+
+                md.push_str("\n\n");
+                md.push_str(&msg.content);
+                md.push_str("\n\n");
+            }
+        }
     }
 
     md
