@@ -1,0 +1,31 @@
+[govctl]
+schema = 1
+id = "WI-2026-01-28-003"
+title = "fix-windows-path-matching-with-tests"
+status = "done"
+created = "2026-01-28"
+started = "2026-01-28"
+completed = "2026-01-28"
+
+[content]
+description = "Fix Windows path matching in find_workspace_dir and export-chat: handle extended-length path prefix and case-insensitive URI comparison"
+
+[[content.acceptance_criteria]]
+text = "Strip Windows extended-length path prefix in export-chat"
+status = "done"
+category = "fixed"
+
+[[content.acceptance_criteria]]
+text = "Case-insensitive URI comparison for Windows paths"
+status = "done"
+category = "fixed"
+
+[[content.acceptance_criteria]]
+text = "Unit tests for path normalization functions"
+status = "done"
+category = "chore"
+
+[[content.acceptance_criteria]]
+text = "Integration test for workspace matching"
+status = "done"
+category = "chore"

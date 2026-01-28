@@ -145,6 +145,8 @@ pub fn execute(
         let canonical = project_path
             .canonicalize()
             .with_context(|| format!("Failed to resolve: {}", project_path.display()))?;
+        // On Windows, canonicalize() returns \\?\ prefix which we need to strip
+        let canonical = strip_windows_prefix(&canonical);
         (canonical, false)
     } else {
         // Path doesn't exist locally - might be a remote path
@@ -707,6 +709,22 @@ fn format_timestamp(ts: i64) -> String {
         .unwrap_or_else(|| ts.to_string())
 }
 
+/// Strip Windows extended-length path prefix (\\?\)
+/// canonicalize() on Windows returns paths like \\?\C:\path which don't match Cursor's stored paths
+fn strip_windows_prefix(path: &Path) -> PathBuf {
+    strip_extended_length_prefix(&path.to_string_lossy())
+}
+
+/// Strip Windows extended-length path prefix from a string (public for testing)
+#[doc(hidden)]
+pub fn strip_extended_length_prefix(path_str: &str) -> PathBuf {
+    if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        PathBuf::from(path_str)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,5 +738,26 @@ mod tests {
         );
         assert_eq!(ExportFormat::from_str("json"), Some(ExportFormat::Json));
         assert_eq!(ExportFormat::from_str("xml"), None);
+    }
+
+    #[test]
+    fn test_strip_extended_length_prefix() {
+        // Extended-length path prefix should be stripped
+        let result = strip_extended_length_prefix(r"\\?\C:\path\to\project");
+        assert_eq!(result, PathBuf::from(r"C:\path\to\project"));
+    }
+
+    #[test]
+    fn test_strip_extended_length_prefix_no_prefix() {
+        // Paths without prefix should be unchanged
+        let result = strip_extended_length_prefix(r"C:\path\to\project");
+        assert_eq!(result, PathBuf::from(r"C:\path\to\project"));
+    }
+
+    #[test]
+    fn test_strip_extended_length_prefix_unix() {
+        // Unix paths should be unchanged
+        let result = strip_extended_length_prefix("/path/to/project");
+        assert_eq!(result, PathBuf::from("/path/to/project"));
     }
 }
