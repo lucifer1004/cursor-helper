@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use fs_extra::dir::{self, CopyOptions};
 use rusqlite::Connection;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Format bytes as human-readable size
 pub fn format_size(bytes: u64) -> String {
@@ -20,6 +20,19 @@ pub fn format_size(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+/// Strip Windows extended-length path prefix (\\?\)
+///
+/// On Windows, `canonicalize()` returns paths like `\\?\C:\path` which don't
+/// match Cursor's stored paths and display poorly. This strips the prefix.
+pub fn strip_windows_prefix(path: &Path) -> PathBuf {
+    let path_str = path.to_string_lossy();
+    if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
     }
 }
 
@@ -234,6 +247,27 @@ mod tests {
         assert_eq!(format_size(1536), "1.5 KB");
         assert_eq!(format_size(1024 * 1024), "1.0 MB");
         assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
+    }
+
+    #[test]
+    fn test_strip_windows_prefix() {
+        // Extended-length path prefix should be stripped
+        let result = strip_windows_prefix(Path::new(r"\\?\C:\path\to\project"));
+        assert_eq!(result, PathBuf::from(r"C:\path\to\project"));
+    }
+
+    #[test]
+    fn test_strip_windows_prefix_no_prefix() {
+        // Paths without prefix should be unchanged
+        let result = strip_windows_prefix(Path::new(r"C:\path\to\project"));
+        assert_eq!(result, PathBuf::from(r"C:\path\to\project"));
+    }
+
+    #[test]
+    fn test_strip_windows_prefix_unix() {
+        // Unix paths should be unchanged
+        let result = strip_windows_prefix(Path::new("/path/to/project"));
+        assert_eq!(result, PathBuf::from("/path/to/project"));
     }
 
     #[test]

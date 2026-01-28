@@ -1,0 +1,17 @@
+[govctl]
+schema = 1
+id = "WI-2026-01-28-005"
+title = "fix-stats-windows-path-prefix"
+status = "done"
+created = "2026-01-28"
+started = "2026-01-28"
+completed = "2026-01-28"
+
+[content]
+description = """
+Fix stats command displaying `\\\\?\\` prefix on Windows paths. Extracted `strip_windows_prefix` to `utils.rs` for shared use."""
+
+[[content.acceptance_criteria]]
+text = "Strip Windows path prefix in stats command"
+status = "done"
+category = "fixed"

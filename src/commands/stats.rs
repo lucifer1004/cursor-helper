@@ -37,10 +37,11 @@ pub fn stats(project_path: Option<PathBuf>) -> Result<Stats> {
         None => std::env::current_dir().context("Failed to get current directory")?,
     };
 
-    // Normalize path
+    // Normalize path and strip Windows extended-length prefix (\\?\)
     let project_path = project_path
         .canonicalize()
         .with_context(|| format!("Path does not exist: {}", project_path.display()))?;
+    let project_path = utils::strip_windows_prefix(&project_path);
 
     // Compute identifiers
     let folder_id_str = folder_id::path_to_folder_id(&project_path);
