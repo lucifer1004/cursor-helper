@@ -1,6 +1,7 @@
 //! List command - Show all Cursor projects
 
 use anyhow::{Context, Result};
+use comfy_table::{presets::UTF8_FULL_CONDENSED, Cell, ContentArrangement, Table};
 use percent_encoding::percent_decode_str;
 use std::fs;
 use std::path::PathBuf;
@@ -8,6 +9,7 @@ use std::time::SystemTime;
 use url::Url;
 
 use super::utils;
+use crate::config;
 
 /// Remote connection type for vscode-remote:// URLs
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +57,7 @@ pub struct RemoteInfo {
 /// A Cursor project discovered from workspace storage
 #[derive(Debug)]
 pub struct Project {
-    /// The folder ID (hash) used by Cursor
+    /// The workspace storage folder ID (hash) used by Cursor
     pub folder_id: String,
 
     /// The project path as stored in workspace.json
@@ -69,10 +71,6 @@ pub struct Project {
 
     /// Number of chat sessions found
     pub chat_count: usize,
-
-    /// The workspace hash (same as folder_id)
-    #[allow(dead_code)]
-    pub workspace_hash: String,
 }
 
 /// List all Cursor projects
@@ -141,12 +139,11 @@ pub fn list(workspace_storage_dir: PathBuf) -> Result<Vec<Project>> {
         let chat_count = utils::count_chat_sessions(&project_dir).unwrap_or(0);
 
         projects.push(Project {
-            folder_id: folder_id.clone(),
+            folder_id,
             path: parsed.path,
             remote: parsed.remote,
             last_modified,
             chat_count,
-            workspace_hash: folder_id,
         });
     }
 
@@ -158,6 +155,123 @@ pub fn list(workspace_storage_dir: PathBuf) -> Result<Vec<Project>> {
     });
 
     Ok(projects)
+}
+
+/// Options for the list command
+pub struct ListOptions {
+    /// Show workspace ID for each project
+    pub with_id: bool,
+    /// Sort by: name, modified, chats
+    pub sort: String,
+    /// Reverse sort order
+    pub reverse: bool,
+    /// Filter: local, remote, or pattern to match path
+    pub filter: Option<String>,
+    /// Limit number of results
+    pub limit: Option<usize>,
+}
+
+/// Execute the list command and return formatted output
+pub fn execute(options: ListOptions) -> Result<String> {
+    let workspace_storage_dir = config::workspace_storage_dir()
+        .context("Failed to determine workspace storage directory")?;
+
+    let mut projects = list(workspace_storage_dir)?;
+
+    // Apply filter
+    if let Some(ref filter_str) = options.filter {
+        projects.retain(|p| {
+            let path_str = p.path.to_string_lossy();
+            match filter_str.as_str() {
+                "local" => p.remote.is_none(),
+                "remote" => p.remote.is_some(),
+                pattern => path_str.contains(pattern),
+            }
+        });
+    }
+
+    // Apply sorting
+    match options.sort.as_str() {
+        "name" => {
+            projects.sort_by(|a, b| a.path.cmp(&b.path));
+        }
+        "chats" => {
+            projects.sort_by(|a, b| b.chat_count.cmp(&a.chat_count));
+        }
+        _ => {
+            // Default (including "modified"): already sorted by modified in list()
+        }
+    }
+
+    // Reverse if requested
+    if options.reverse {
+        projects.reverse();
+    }
+
+    // Apply limit
+    let total_count = projects.len();
+    if let Some(n) = options.limit {
+        projects.truncate(n);
+    }
+
+    // Build table
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL_CONDENSED)
+        .set_content_arrangement(ContentArrangement::Dynamic);
+
+    // Build header
+    let mut header = vec![];
+    if options.with_id {
+        header.push(Cell::new("ID"));
+    }
+    header.push(Cell::new("Remote"));
+    header.push(Cell::new("Path"));
+    header.push(Cell::new("Chats"));
+    header.push(Cell::new("Modified"));
+    table.set_header(header);
+
+    for project in &projects {
+        let path_str = project.path.to_string_lossy().to_string();
+        let chat_str = project.chat_count.to_string();
+        let remote_str = match &project.remote {
+            Some(r) => format!("{}:{}", r.remote_type, r.name),
+            None => "-".to_string(),
+        };
+        let modified_str = project
+            .last_modified
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| {
+                let secs = d.as_secs();
+                let dt = chrono::DateTime::from_timestamp(secs as i64, 0).unwrap_or_default();
+                dt.format("%Y-%m-%d %H:%M").to_string()
+            })
+            .unwrap_or_else(|| "-".to_string());
+
+        let mut row = vec![];
+        if options.with_id {
+            row.push(Cell::new(&project.folder_id));
+        }
+        row.push(Cell::new(remote_str));
+        row.push(Cell::new(path_str));
+        row.push(Cell::new(chat_str));
+        row.push(Cell::new(modified_str));
+        table.add_row(row);
+    }
+
+    // Build output
+    let mut output = table.to_string();
+    if projects.len() < total_count {
+        output.push_str(&format!(
+            "\n\nShowing {} of {} projects",
+            projects.len(),
+            total_count
+        ));
+    } else {
+        output.push_str(&format!("\n\n{} projects found", total_count));
+    }
+
+    Ok(output)
 }
 
 /// Parsed URL result containing path and optional remote info

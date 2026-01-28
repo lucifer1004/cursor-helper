@@ -667,6 +667,75 @@ fn parse_composer_data(data: &str, include_archived: bool) -> Option<Vec<Compose
     Some(result)
 }
 
+/// Format a single message as markdown
+///
+/// `heading` is the markdown heading prefix (e.g., "##" or "###")
+fn format_message_as_markdown(msg: &ChatMessage, heading: &str) -> String {
+    let mut md = String::new();
+
+    match msg.role.as_str() {
+        "thinking" => {
+            md.push_str(&format!("{} 💭 **Thinking**", heading));
+            if let Some(duration) = msg.thinking_duration_ms {
+                md.push_str(&format!(" _{:.1}s_", duration as f64 / 1000.0));
+            }
+            md.push_str("\n\n");
+            md.push_str("<details>\n<summary>Click to expand thinking...</summary>\n\n");
+            md.push_str(&msg.content);
+            md.push_str("\n\n</details>\n\n");
+        }
+        "tool" => {
+            if let Some(ref tc) = msg.tool_call {
+                md.push_str(&format!("{} 🔧 **Tool: {}**", heading, tc.name));
+                if let Some(ref status) = tc.status {
+                    md.push_str(&format!(" [{}]", status));
+                }
+                md.push_str("\n\n");
+
+                if let Some(ref params) = tc.params {
+                    md.push_str("<details>\n<summary>Parameters</summary>\n\n```json\n");
+                    md.push_str(params);
+                    md.push_str("\n```\n\n</details>\n\n");
+                }
+
+                if let Some(ref result) = tc.result {
+                    md.push_str("<details>\n<summary>Result</summary>\n\n```\n");
+                    md.push_str(result);
+                    md.push_str("\n```\n\n</details>\n\n");
+                }
+            }
+        }
+        _ => {
+            let role_display = match msg.role.as_str() {
+                "user" => "**User**",
+                "assistant" => "**Assistant**",
+                "system" => "**System**",
+                other => other,
+            };
+
+            md.push_str(&format!("{} {}", heading, role_display));
+
+            // Add model info if present
+            if let Some(ref model) = msg.model {
+                md.push_str(&format!(" _{}_", model));
+            }
+
+            // Add token count if present
+            if let Some(ref tokens) = msg.tokens {
+                if tokens.input > 0 || tokens.output > 0 {
+                    md.push_str(&format!(" ({}↓ {}↑)", tokens.input, tokens.output));
+                }
+            }
+
+            md.push_str("\n\n");
+            md.push_str(&msg.content);
+            md.push_str("\n\n");
+        }
+    }
+
+    md
+}
+
 /// Format export as markdown
 fn format_as_markdown(export: &ChatExport) -> String {
     let mut md = String::new();
@@ -688,65 +757,7 @@ fn format_as_markdown(export: &ChatExport) -> String {
         }
 
         for msg in &session.messages {
-            match msg.role.as_str() {
-                "thinking" => {
-                    md.push_str("### 💭 **Thinking**");
-                    if let Some(duration) = msg.thinking_duration_ms {
-                        md.push_str(&format!(" _{:.1}s_", duration as f64 / 1000.0));
-                    }
-                    md.push_str("\n\n");
-                    md.push_str("<details>\n<summary>Click to expand thinking...</summary>\n\n");
-                    md.push_str(&msg.content);
-                    md.push_str("\n\n</details>\n\n");
-                }
-                "tool" => {
-                    if let Some(ref tc) = msg.tool_call {
-                        md.push_str(&format!("### 🔧 **Tool: {}**", tc.name));
-                        if let Some(ref status) = tc.status {
-                            md.push_str(&format!(" [{}]", status));
-                        }
-                        md.push_str("\n\n");
-
-                        if let Some(ref params) = tc.params {
-                            md.push_str("<details>\n<summary>Parameters</summary>\n\n```json\n");
-                            md.push_str(params);
-                            md.push_str("\n```\n\n</details>\n\n");
-                        }
-
-                        if let Some(ref result) = tc.result {
-                            md.push_str("<details>\n<summary>Result</summary>\n\n```\n");
-                            md.push_str(result);
-                            md.push_str("\n```\n\n</details>\n\n");
-                        }
-                    }
-                }
-                _ => {
-                    let role_display = match msg.role.as_str() {
-                        "user" => "**User**",
-                        "assistant" => "**Assistant**",
-                        "system" => "**System**",
-                        other => other,
-                    };
-
-                    md.push_str(&format!("### {}", role_display));
-
-                    // Add model info if present
-                    if let Some(ref model) = msg.model {
-                        md.push_str(&format!(" _{}_", model));
-                    }
-
-                    // Add token count if present
-                    if let Some(ref tokens) = msg.tokens {
-                        if tokens.input > 0 || tokens.output > 0 {
-                            md.push_str(&format!(" ({}↓ {}↑)", tokens.input, tokens.output));
-                        }
-                    }
-
-                    md.push_str("\n\n");
-                    md.push_str(&msg.content);
-                    md.push_str("\n\n");
-                }
-            }
+            md.push_str(&format_message_as_markdown(msg, "###"));
         }
 
         md.push_str("---\n\n");
@@ -831,65 +842,7 @@ fn format_single_session_as_markdown(session: &ChatSession, index: usize) -> Str
     md.push_str("---\n\n");
 
     for msg in &session.messages {
-        match msg.role.as_str() {
-            "thinking" => {
-                md.push_str("## 💭 **Thinking**");
-                if let Some(duration) = msg.thinking_duration_ms {
-                    md.push_str(&format!(" _{:.1}s_", duration as f64 / 1000.0));
-                }
-                md.push_str("\n\n");
-                md.push_str("<details>\n<summary>Click to expand thinking...</summary>\n\n");
-                md.push_str(&msg.content);
-                md.push_str("\n\n</details>\n\n");
-            }
-            "tool" => {
-                if let Some(ref tc) = msg.tool_call {
-                    md.push_str(&format!("## 🔧 **Tool: {}**", tc.name));
-                    if let Some(ref status) = tc.status {
-                        md.push_str(&format!(" [{}]", status));
-                    }
-                    md.push_str("\n\n");
-
-                    if let Some(ref params) = tc.params {
-                        md.push_str("<details>\n<summary>Parameters</summary>\n\n```json\n");
-                        md.push_str(params);
-                        md.push_str("\n```\n\n</details>\n\n");
-                    }
-
-                    if let Some(ref result) = tc.result {
-                        md.push_str("<details>\n<summary>Result</summary>\n\n```\n");
-                        md.push_str(result);
-                        md.push_str("\n```\n\n</details>\n\n");
-                    }
-                }
-            }
-            _ => {
-                let role_display = match msg.role.as_str() {
-                    "user" => "**User**",
-                    "assistant" => "**Assistant**",
-                    "system" => "**System**",
-                    other => other,
-                };
-
-                md.push_str(&format!("## {}", role_display));
-
-                // Add model info if present
-                if let Some(ref model) = msg.model {
-                    md.push_str(&format!(" _{}_", model));
-                }
-
-                // Add token count if present
-                if let Some(ref tokens) = msg.tokens {
-                    if tokens.input > 0 || tokens.output > 0 {
-                        md.push_str(&format!(" ({}↓ {}↑)", tokens.input, tokens.output));
-                    }
-                }
-
-                md.push_str("\n\n");
-                md.push_str(&msg.content);
-                md.push_str("\n\n");
-            }
-        }
+        md.push_str(&format_message_as_markdown(msg, "##"));
     }
 
     md

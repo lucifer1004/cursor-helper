@@ -428,31 +428,15 @@ fn path_to_file_uri(path: &Path) -> Result<String> {
 
 /// Estimate workspace hash after a move (uses old birthtime with new path)
 fn estimate_hash_after_move(old_path: &Path, new_path: &Path) -> Result<String> {
+    use std::time::UNIX_EPOCH;
+
     let metadata = fs::metadata(old_path)?;
+    let created = metadata.created()?;
+    let duration = created.duration_since(UNIX_EPOCH)?;
+    let birthtime_ms = duration.as_secs_f64() * 1000.0;
+    let birthtime_rounded = birthtime_ms.round() as u64;
 
-    #[cfg(unix)]
-    {
-        use std::time::UNIX_EPOCH;
-        let created = metadata.created()?;
-        let duration = created.duration_since(UNIX_EPOCH)?;
-        let birthtime_ms = duration.as_secs_f64() * 1000.0;
-        let birthtime_rounded = birthtime_ms.round() as u64;
-
-        let input = format!("{}{}", new_path.to_string_lossy(), birthtime_rounded);
-        let hash = md5::compute(input.as_bytes());
-        Ok(format!("{:x}", hash))
-    }
-
-    #[cfg(windows)]
-    {
-        use std::time::UNIX_EPOCH;
-        let created = metadata.created()?;
-        let duration = created.duration_since(UNIX_EPOCH)?;
-        let birthtime_ms = duration.as_secs_f64() * 1000.0;
-        let birthtime_rounded = birthtime_ms.round() as u64;
-
-        let input = format!("{}{}", new_path.to_string_lossy(), birthtime_rounded);
-        let hash = md5::compute(input.as_bytes());
-        Ok(format!("{:x}", hash))
-    }
+    let input = format!("{}{}", new_path.to_string_lossy(), birthtime_rounded);
+    let hash = md5::compute(input.as_bytes());
+    Ok(format!("{:x}", hash))
 }

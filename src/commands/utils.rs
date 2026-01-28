@@ -214,24 +214,14 @@ pub fn find_workspace_dir(project_path: &Path) -> Result<Option<std::path::PathB
 }
 
 /// Normalize a file URI for comparison
-/// On Windows, Cursor uses lowercase drive letters and percent-encoded colons,
-/// while Url::from_file_path uses uppercase. We normalize both to lowercase.
+///
+/// Handles cross-platform differences:
+/// - Trims trailing slashes
+/// - Lowercases for case-insensitive comparison (Windows drive letters)
+/// - Decodes %3A to : (Cursor's encoding vs Url::from_file_path)
+///
+/// This normalization is safe to apply on all platforms.
 fn normalize_uri_for_comparison(uri: &str) -> String {
-    #[cfg(windows)]
-    {
-        normalize_uri_windows(uri)
-    }
-
-    #[cfg(not(windows))]
-    {
-        uri.trim_end_matches('/').to_string()
-    }
-}
-
-/// Windows-specific URI normalization (public for testing)
-/// Normalizes case and percent-encoded colons for comparison
-#[doc(hidden)]
-pub fn normalize_uri_windows(uri: &str) -> String {
     uri.trim_end_matches('/').to_lowercase().replace("%3a", ":")
 }
 
@@ -271,26 +261,33 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_uri_windows_case_insensitive() {
-        // Windows normalization: URIs should match regardless of drive letter case
-        let upper = normalize_uri_windows("file:///C:/path/to/project");
-        let lower = normalize_uri_windows("file:///c:/path/to/project");
+    fn test_normalize_uri_case_insensitive() {
+        // URIs should match regardless of drive letter case
+        let upper = normalize_uri_for_comparison("file:///C:/path/to/project");
+        let lower = normalize_uri_for_comparison("file:///c:/path/to/project");
         assert_eq!(upper, lower);
     }
 
     #[test]
-    fn test_normalize_uri_windows_percent_encoding() {
-        // Windows normalization: Cursor stores %3A for colon, Url::from_file_path uses :
-        let encoded = normalize_uri_windows("file:///c%3A/path/to/project");
-        let decoded = normalize_uri_windows("file:///c:/path/to/project");
+    fn test_normalize_uri_percent_encoding() {
+        // Cursor stores %3A for colon, Url::from_file_path uses :
+        let encoded = normalize_uri_for_comparison("file:///c%3A/path/to/project");
+        let decoded = normalize_uri_for_comparison("file:///c:/path/to/project");
         assert_eq!(encoded, decoded);
     }
 
     #[test]
-    fn test_normalize_uri_windows_trailing_slash() {
-        let with_slash = normalize_uri_windows("file:///c:/path/");
-        let without_slash = normalize_uri_windows("file:///c:/path");
+    fn test_normalize_uri_trailing_slash() {
+        let with_slash = normalize_uri_for_comparison("file:///c:/path/");
+        let without_slash = normalize_uri_for_comparison("file:///c:/path");
         assert_eq!(with_slash, without_slash);
+    }
+
+    #[test]
+    fn test_normalize_uri_unix_paths() {
+        // Unix paths should also work (lowercasing is harmless)
+        let result = normalize_uri_for_comparison("file:///Users/me/project/");
+        assert_eq!(result, "file:///users/me/project");
     }
 
     #[test]

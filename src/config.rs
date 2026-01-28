@@ -9,33 +9,33 @@ pub fn cursor_projects_dir() -> Result<PathBuf> {
     Ok(home.join(".cursor").join("projects"))
 }
 
-/// Get the Cursor workspace storage directory
-/// - macOS: ~/Library/Application Support/Cursor/User/workspaceStorage/
-/// - Linux: ~/.config/Cursor/User/workspaceStorage/
-/// - Windows: %APPDATA%/Cursor/User/workspaceStorage/
-pub fn workspace_storage_dir() -> Result<PathBuf> {
+/// Get the Cursor configuration directory
+/// - macOS: ~/Library/Application Support/Cursor/
+/// - Linux: ~/.config/Cursor/
+/// - Windows: %APPDATA%/Cursor/
+fn cursor_config_dir() -> Result<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         let home = dirs::home_dir().context("Could not determine home directory")?;
         Ok(home
             .join("Library")
             .join("Application Support")
-            .join("Cursor")
-            .join("User")
-            .join("workspaceStorage"))
+            .join("Cursor"))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "macos"))]
     {
         let config = dirs::config_dir().context("Could not determine config directory")?;
-        Ok(config.join("Cursor").join("User").join("workspaceStorage"))
+        Ok(config.join("Cursor"))
     }
+}
 
-    #[cfg(target_os = "windows")]
-    {
-        let appdata = dirs::config_dir().context("Could not determine AppData directory")?;
-        Ok(appdata.join("Cursor").join("User").join("workspaceStorage"))
-    }
+/// Get the Cursor workspace storage directory
+/// - macOS: ~/Library/Application Support/Cursor/User/workspaceStorage/
+/// - Linux: ~/.config/Cursor/User/workspaceStorage/
+/// - Windows: %APPDATA%/Cursor/User/workspaceStorage/
+pub fn workspace_storage_dir() -> Result<PathBuf> {
+    Ok(cursor_config_dir()?.join("User").join("workspaceStorage"))
 }
 
 /// Get the Cursor global storage directory
@@ -43,28 +43,7 @@ pub fn workspace_storage_dir() -> Result<PathBuf> {
 /// - Linux: ~/.config/Cursor/User/globalStorage/
 /// - Windows: %APPDATA%/Cursor/User/globalStorage/
 pub fn global_storage_dir() -> Result<PathBuf> {
-    #[cfg(target_os = "macos")]
-    {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        Ok(home
-            .join("Library")
-            .join("Application Support")
-            .join("Cursor")
-            .join("User")
-            .join("globalStorage"))
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let config = dirs::config_dir().context("Could not determine config directory")?;
-        Ok(config.join("Cursor").join("User").join("globalStorage"))
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let appdata = dirs::config_dir().context("Could not determine AppData directory")?;
-        Ok(appdata.join("Cursor").join("User").join("globalStorage"))
-    }
+    Ok(cursor_config_dir()?.join("User").join("globalStorage"))
 }
 
 #[cfg(test)]

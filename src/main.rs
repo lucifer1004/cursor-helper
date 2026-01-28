@@ -6,7 +6,6 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use comfy_table::{presets::UTF8_FULL_CONDENSED, Cell, ContentArrangement, Table};
 use owo_colors::OwoColorize;
 use std::path::PathBuf;
 
@@ -183,98 +182,15 @@ fn main() -> Result<()> {
             filter,
             limit,
         } => {
-            let workspace_storage_dir = config::workspace_storage_dir()
-                .context("Failed to determine workspace storage directory")?;
-
-            let mut projects = commands::list::list(workspace_storage_dir)?;
-
-            // Apply filter
-            if let Some(ref filter_str) = filter {
-                projects.retain(|p| {
-                    let path_str = p.path.to_string_lossy();
-                    match filter_str.as_str() {
-                        "local" => p.remote.is_none(),
-                        "remote" => p.remote.is_some(),
-                        pattern => path_str.contains(pattern),
-                    }
-                });
-            }
-
-            // Apply sorting
-            match sort.as_str() {
-                "name" => {
-                    projects.sort_by(|a, b| a.path.cmp(&b.path));
-                }
-                "chats" => {
-                    projects.sort_by(|a, b| b.chat_count.cmp(&a.chat_count));
-                }
-                _ => {
-                    // Default (including "modified"): already sorted by modified in list()
-                }
-            }
-
-            // Reverse if requested
-            if reverse {
-                projects.reverse();
-            }
-
-            // Apply limit
-            let total_count = projects.len();
-            if let Some(n) = limit {
-                projects.truncate(n);
-            }
-
-            let mut table = Table::new();
-            table
-                .load_preset(UTF8_FULL_CONDENSED)
-                .set_content_arrangement(ContentArrangement::Dynamic);
-
-            // Build header
-            let mut header = vec![];
-            if with_id {
-                header.push(Cell::new("ID"));
-            }
-            header.push(Cell::new("Remote"));
-            header.push(Cell::new("Path"));
-            header.push(Cell::new("Chats"));
-            header.push(Cell::new("Modified"));
-            table.set_header(header);
-
-            for project in &projects {
-                let path_str = project.path.to_string_lossy().to_string();
-                let chat_str = project.chat_count.to_string();
-                let remote_str = match &project.remote {
-                    Some(r) => format!("{}:{}", r.remote_type, r.name),
-                    None => "-".to_string(),
-                };
-                let modified_str = project
-                    .last_modified
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| {
-                        let secs = d.as_secs();
-                        let dt =
-                            chrono::DateTime::from_timestamp(secs as i64, 0).unwrap_or_default();
-                        dt.format("%Y-%m-%d %H:%M").to_string()
-                    })
-                    .unwrap_or_else(|| "-".to_string());
-
-                let mut row = vec![];
-                if with_id {
-                    row.push(Cell::new(&project.folder_id));
-                }
-                row.push(Cell::new(remote_str));
-                row.push(Cell::new(path_str));
-                row.push(Cell::new(chat_str));
-                row.push(Cell::new(modified_str));
-                table.add_row(row);
-            }
-
-            println!("{table}");
-            if projects.len() < total_count {
-                println!("\nShowing {} of {} projects", projects.len(), total_count);
-            } else {
-                println!("\n{} projects found", total_count);
-            }
+            let options = commands::list::ListOptions {
+                with_id,
+                sort,
+                reverse,
+                filter,
+                limit,
+            };
+            let output = commands::list::execute(options)?;
+            println!("{}", output);
         }
 
         Commands::Stats { project_path } => {
