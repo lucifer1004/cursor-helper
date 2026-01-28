@@ -65,6 +65,10 @@ cursor-helper export-chat /path/to/project
 
 # Export to JSON
 cursor-helper export-chat /path/to/project --format json -o export.json
+
+# Remote sessions (SSH, tunnels, WSL, dev containers)
+cursor-helper export-chat /home/user/project        # By remote path
+cursor-helper export-chat --workspace-id abc123def  # By workspace ID (from 'list')
 ```
 
 | Flag                 | What it adds                                   |
@@ -74,6 +78,7 @@ cursor-helper export-chat /path/to/project --format json -o export.json
 | `--with-stats`       | Model name and token counts                    |
 | `-v`                 | All of the above                               |
 | `--include-archived` | Include archived sessions                      |
+| `--workspace-id`     | Export by workspace ID (for remote sessions)   |
 
 ### `list` — See All Your Projects
 

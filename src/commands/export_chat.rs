@@ -140,19 +140,40 @@ pub fn execute(
 ) -> Result<()> {
     let project_path = PathBuf::from(project_path);
 
-    // Canonicalize to absolute path
-    let project_path = project_path
-        .canonicalize()
-        .with_context(|| format!("Project path does not exist: {}", project_path.display()))?;
+    // Try to canonicalize for local paths, but allow remote paths that don't exist locally
+    let (project_path, is_remote) = if project_path.exists() {
+        let canonical = project_path
+            .canonicalize()
+            .with_context(|| format!("Failed to resolve: {}", project_path.display()))?;
+        (canonical, false)
+    } else {
+        // Path doesn't exist locally - might be a remote path
+        // Make it absolute if it's relative
+        let abs_path = if project_path.is_absolute() {
+            project_path
+        } else {
+            std::env::current_dir()?.join(&project_path)
+        };
+        (abs_path, true)
+    };
 
     // Find workspace storage for this project
     let workspace_dir = utils::find_workspace_dir(&project_path)?;
 
     let Some(workspace_dir) = workspace_dir else {
-        bail!(
-            "No Cursor workspace data found for: {}",
-            project_path.display()
-        );
+        if is_remote {
+            bail!(
+                "No Cursor workspace data found for remote path: {}\n\
+                 Hint: For remote sessions, use the exact path as shown in Cursor\n\
+                 (e.g., /home/user/project for SSH/tunnel connections)",
+                project_path.display()
+            );
+        } else {
+            bail!(
+                "No Cursor workspace data found for: {}",
+                project_path.display()
+            );
+        }
     };
 
     // Extract chat sessions
@@ -168,6 +189,80 @@ pub fn execute(
     // Build export
     let export = ChatExport {
         project_path: project_path.to_string_lossy().to_string(),
+        exported_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+        sessions,
+    };
+
+    // Format output
+    let content = match format {
+        ExportFormat::Markdown => format_as_markdown(&export),
+        ExportFormat::Json => serde_json::to_string_pretty(&export)?,
+    };
+
+    // Write or print
+    if let Some(output_path) = output {
+        fs::write(output_path, &content)
+            .with_context(|| format!("Failed to write: {}", output_path))?;
+        println!("Exported to: {}", output_path);
+    } else {
+        println!("{}", content);
+    }
+
+    Ok(())
+}
+
+/// Execute the export-chat command using workspace ID directly
+///
+/// This is useful for remote sessions where the path doesn't exist locally.
+/// Use `cursor-helper list` to find workspace IDs.
+pub fn execute_by_id(
+    workspace_id: &str,
+    format: ExportFormat,
+    output: Option<&str>,
+    options: &ExportOptions,
+) -> Result<()> {
+    let workspace_storage_dir = crate::config::workspace_storage_dir()?;
+    let workspace_dir = workspace_storage_dir.join(workspace_id);
+
+    if !workspace_dir.exists() {
+        bail!(
+            "Workspace not found: {}\n\
+             Hint: Use 'cursor-helper list' to see available workspaces",
+            workspace_id
+        );
+    }
+
+    // Try to read the project path from workspace.json
+    let project_path = {
+        let workspace_json = workspace_dir.join("workspace.json");
+        if workspace_json.exists() {
+            let content = fs::read_to_string(&workspace_json)?;
+            let ws: serde_json::Value = serde_json::from_str(&content)?;
+            ws.get("folder")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("workspace:{}", workspace_id))
+        } else {
+            format!("workspace:{}", workspace_id)
+        }
+    };
+
+    // Extract chat sessions
+    let sessions = extract_chat_sessions(&workspace_dir, options)?;
+
+    if sessions.is_empty() {
+        println!("No chat sessions found for this workspace.");
+        return Ok(());
+    }
+
+    println!("Found {} chat session(s)", sessions.len());
+
+    // Build export
+    let export = ChatExport {
+        project_path,
         exported_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)

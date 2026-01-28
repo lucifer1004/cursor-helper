@@ -1,0 +1,26 @@
+[govctl]
+schema = 1
+id = "WI-2026-01-28-001"
+title = "export-chat-remote-sessions"
+status = "done"
+created = "2026-01-28"
+started = "2026-01-28"
+completed = "2026-01-28"
+
+[content]
+description = "Enable export-chat command to work with remote sessions (SSH, tunnels, WSL, dev containers) by searching vscode-remote:// URLs and adding --workspace-id flag for direct lookup"
+
+[[content.acceptance_criteria]]
+text = "Export chat from remote sessions by path matching"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "`--workspace-id` flag for direct workspace lookup"
+status = "done"
+category = "added"
+
+[[content.acceptance_criteria]]
+text = "Update README and CHANGELOG"
+status = "done"
+category = "chore"

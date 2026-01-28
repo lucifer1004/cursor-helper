@@ -100,6 +100,10 @@ pub fn calculate_dir_size(path: &Path) -> Result<u64> {
 }
 
 /// Find workspace storage directory for a project path
+///
+/// Supports both local paths and remote paths:
+/// - Local: matches file:// URLs in workspace.json
+/// - Remote: if path doesn't exist locally, searches vscode-remote:// URLs for matching path component
 pub fn find_workspace_dir(project_path: &Path) -> Result<Option<std::path::PathBuf>> {
     let workspace_storage_dir = crate::config::workspace_storage_dir()?;
 
@@ -107,12 +111,41 @@ pub fn find_workspace_dir(project_path: &Path) -> Result<Option<std::path::PathB
         return Ok(None);
     }
 
-    let project_uri = url::Url::from_file_path(project_path)
-        .map_err(|_| anyhow::anyhow!("Invalid project path"))?
-        .to_string();
-    let project_uri_normalized = project_uri.trim_end_matches('/');
+    // Try local path first
+    if project_path.exists() {
+        let project_uri = url::Url::from_file_path(project_path)
+            .map_err(|_| anyhow::anyhow!("Invalid project path"))?
+            .to_string();
+        let project_uri_normalized = project_uri.trim_end_matches('/');
 
-    // Scan workspace storage for matching project
+        // Scan workspace storage for matching local project
+        for entry in fs::read_dir(&workspace_storage_dir)?.flatten() {
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+
+            let workspace_json = entry.path().join("workspace.json");
+            if !workspace_json.exists() {
+                continue;
+            }
+
+            let content = fs::read_to_string(&workspace_json)?;
+            let ws: serde_json::Value = serde_json::from_str(&content)?;
+
+            if let Some(folder) = ws.get("folder").and_then(|v| v.as_str()) {
+                let folder_normalized = folder.trim_end_matches('/');
+                if folder_normalized == project_uri_normalized {
+                    return Ok(Some(entry.path()));
+                }
+            }
+        }
+    }
+
+    // Path doesn't exist locally - search for matching remote workspace
+    // The path might be a remote path like /home/user/project
+    let search_path = project_path.to_string_lossy();
+    let search_path_normalized = search_path.trim_end_matches('/');
+
     for entry in fs::read_dir(&workspace_storage_dir)?.flatten() {
         if !entry.file_type()?.is_dir() {
             continue;
@@ -127,9 +160,24 @@ pub fn find_workspace_dir(project_path: &Path) -> Result<Option<std::path::PathB
         let ws: serde_json::Value = serde_json::from_str(&content)?;
 
         if let Some(folder) = ws.get("folder").and_then(|v| v.as_str()) {
-            let folder_normalized = folder.trim_end_matches('/');
-            if folder_normalized == project_uri_normalized {
-                return Ok(Some(entry.path()));
+            // Check if this is a remote URL and extract the path
+            if let Ok(url) = url::Url::parse(folder) {
+                if url.scheme() == "vscode-remote" {
+                    // Extract path from remote URL and compare
+                    let remote_path = url.path().trim_end_matches('/');
+                    if remote_path == search_path_normalized {
+                        return Ok(Some(entry.path()));
+                    }
+                    // Also try matching just the final component (project name)
+                    if let Some(remote_name) = remote_path.rsplit('/').next() {
+                        if let Some(search_name) = search_path_normalized.rsplit(['/', '\\']).next()
+                        {
+                            if remote_name == search_name && !remote_name.is_empty() {
+                                return Ok(Some(entry.path()));
+                            }
+                        }
+                    }
+                }
             }
         }
     }

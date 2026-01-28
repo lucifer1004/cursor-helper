@@ -73,8 +73,12 @@ enum Commands {
 
     /// Export chat history to a readable format
     ExportChat {
-        /// Project path
-        project_path: String,
+        /// Project path (local or remote, e.g., /home/user/project for SSH)
+        project_path: Option<String>,
+
+        /// Workspace ID (hash) - use instead of project_path for direct lookup
+        #[arg(long, conflicts_with = "project_path")]
+        workspace_id: Option<String>,
 
         /// Output format: md or json (default: md)
         #[arg(long, short, default_value = "md")]
@@ -273,6 +277,7 @@ fn main() -> Result<()> {
 
         Commands::ExportChat {
             project_path,
+            workspace_id,
             format,
             output,
             with_thinking,
@@ -289,7 +294,23 @@ fn main() -> Result<()> {
                 with_stats: with_stats || verbose,
                 include_archived,
             };
-            commands::export_chat::execute(&project_path, format, output.as_deref(), &options)?;
+
+            // Either project_path or workspace_id must be provided
+            match (project_path, workspace_id) {
+                (Some(path), None) => {
+                    commands::export_chat::execute(&path, format, output.as_deref(), &options)?;
+                }
+                (None, Some(id)) => {
+                    commands::export_chat::execute_by_id(&id, format, output.as_deref(), &options)?;
+                }
+                (None, None) => {
+                    anyhow::bail!("Either project_path or --workspace-id must be provided");
+                }
+                (Some(_), Some(_)) => {
+                    // This case is prevented by clap's conflicts_with
+                    unreachable!()
+                }
+            }
         }
 
         Commands::Clean { dry_run, yes } => {
