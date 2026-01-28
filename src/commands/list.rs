@@ -135,7 +135,8 @@ pub fn list(workspace_storage_dir: PathBuf) -> Result<Vec<Project>> {
         // Get last modified time
         let last_modified = entry.metadata()?.modified().ok();
 
-        // Count chat sessions
+        // Count chat sessions (default to 0 on error to avoid one bad project
+        // breaking the entire list - the project path is still shown)
         let chat_count = utils::count_chat_sessions(&project_dir).unwrap_or(0);
 
         projects.push(Project {

@@ -358,16 +358,23 @@ fn extract_chat_sessions(
         &db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .with_context(|| format!("Failed to open: {}", db_path.display()))?;
+    .with_context(|| format!("Failed to open database: {}", db_path.display()))?;
 
     // Query composer metadata from workspace storage
-    let composer_data: Option<String> = conn
-        .query_row(
-            "SELECT value FROM ItemTable WHERE key = 'composer.composerData'",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
+    // QueryReturnedNoRows means no chat sessions exist, not an error
+    let composer_data: Option<String> = match conn.query_row(
+        "SELECT value FROM ItemTable WHERE key = 'composer.composerData'",
+        [],
+        |row| row.get(0),
+    ) {
+        Ok(data) => Some(data),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!("Failed to query chat metadata from: {}", db_path.display())
+            })
+        }
+    };
 
     // Parse composer metadata to get session info
     let composers: Vec<ComposerInfo> = composer_data
@@ -379,7 +386,7 @@ fn extract_chat_sessions(
         return Ok(vec![]);
     }
 
-    // Open global storage for bubble content
+    // Open global storage for bubble content (optional - may not exist on all setups)
     let global_db_path = crate::config::global_storage_dir()
         .ok()
         .map(|d| d.join("state.vscdb"))
@@ -390,7 +397,7 @@ fn extract_chat_sessions(
             &path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
-        .ok()
+        .ok() // Global storage is optional - proceed without messages if unavailable
     });
 
     // Build sessions with messages from global storage

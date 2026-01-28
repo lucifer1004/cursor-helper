@@ -62,6 +62,9 @@ pub fn copy_dir_contents(src: &Path, dst: &Path) -> Result<()> {
 /// Counts Composer sessions from `composer.composerData` which contain actual
 /// exportable chat content. Previously counted old `workbench.panel.aichat.*`
 /// keys which are orphaned UI references without content.
+///
+/// Returns 0 if the database doesn't exist or has no chat data.
+/// Returns an error for actual database problems (corruption, permissions).
 pub fn count_chat_sessions(workspace_dir: &Path) -> Result<usize> {
     let db_path = workspace_dir.join("state.vscdb");
 
@@ -74,24 +77,30 @@ pub fn count_chat_sessions(workspace_dir: &Path) -> Result<usize> {
         &db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .with_context(|| format!("Failed to open: {}", db_path.display()))?;
+    .with_context(|| format!("Failed to open database: {}", db_path.display()))?;
 
     // Get composer.composerData which contains the list of Composer sessions
-    let composer_data: Option<String> = conn
-        .query_row(
-            "SELECT value FROM ItemTable WHERE key = 'composer.composerData'",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
+    // QueryReturnedNoRows means no chat data exists (0 sessions), not an error
+    let composer_data: Option<String> = match conn.query_row(
+        "SELECT value FROM ItemTable WHERE key = 'composer.composerData'",
+        [],
+        |row| row.get(0),
+    ) {
+        Ok(data) => Some(data),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => {
+            return Err(e)
+                .with_context(|| format!("Failed to query chat data from: {}", db_path.display()))
+        }
+    };
 
     let Some(data) = composer_data else {
         return Ok(0);
     };
 
     // Parse JSON to count sessions
-    let json: serde_json::Value =
-        serde_json::from_str(&data).with_context(|| "Failed to parse composer.composerData")?;
+    let json: serde_json::Value = serde_json::from_str(&data)
+        .with_context(|| format!("Corrupted chat data in: {}", db_path.display()))?;
 
     let count = json
         .get("allComposers")
