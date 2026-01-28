@@ -66,19 +66,27 @@ cursor-helper export-chat /path/to/project
 # Export to JSON
 cursor-helper export-chat /path/to/project --format json -o export.json
 
+# Split into separate files per session
+cursor-helper export-chat /path/to/project --split --output ./chats/
+
+# Exclude empty sessions
+cursor-helper export-chat /path/to/project --exclude-blank
+
 # Remote sessions (SSH, tunnels, WSL, dev containers)
 cursor-helper export-chat /home/user/project        # By remote path
 cursor-helper export-chat --workspace-id abc123def  # By workspace ID (from 'list')
 ```
 
-| Flag                 | What it adds                                   |
-| -------------------- | ---------------------------------------------- |
-| `--with-thinking`    | AI reasoning/thinking blocks with duration     |
-| `--with-tools`       | Tool calls (file reads, edits, shell commands) |
-| `--with-stats`       | Model name and token counts                    |
-| `-v`                 | All of the above                               |
-| `--include-archived` | Include archived sessions                      |
-| `--workspace-id`     | Export by workspace ID (for remote sessions)   |
+| Flag                 | What it does                                 |
+| -------------------- | -------------------------------------------- |
+| `--with-thinking`    | Include AI reasoning/thinking blocks         |
+| `--with-tools`       | Include tool calls (file reads, edits, etc.) |
+| `--with-stats`       | Include model name and token counts          |
+| `-v`                 | All of the above                             |
+| `--split`            | Export each session to a separate file       |
+| `--exclude-blank`    | Skip sessions with no messages               |
+| `--include-archived` | Include archived sessions                    |
+| `--workspace-id`     | Export by workspace ID (for remote sessions) |
 
 ### `list` — See All Your Projects
 

@@ -213,7 +213,13 @@ pub fn execute(
             anyhow::anyhow!("--split requires --output to specify the output directory")
         })?;
 
-        write_split_output(&sessions, output_dir, format, &project_path_str, exported_at)?;
+        write_split_output(
+            &sessions,
+            output_dir,
+            format,
+            &project_path_str,
+            exported_at,
+        )?;
     } else {
         // Build single export
         let export = ChatExport {
@@ -896,7 +902,6 @@ fn format_timestamp(ts: i64) -> String {
         .unwrap_or_else(|| ts.to_string())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -911,5 +916,4 @@ mod tests {
         assert_eq!(ExportFormat::from_str("json"), Some(ExportFormat::Json));
         assert_eq!(ExportFormat::from_str("xml"), None);
     }
-
 }

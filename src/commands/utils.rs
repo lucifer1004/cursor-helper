@@ -90,8 +90,8 @@ pub fn count_chat_sessions(workspace_dir: &Path) -> Result<usize> {
     };
 
     // Parse JSON to count sessions
-    let json: serde_json::Value = serde_json::from_str(&data)
-        .with_context(|| "Failed to parse composer.composerData")?;
+    let json: serde_json::Value =
+        serde_json::from_str(&data).with_context(|| "Failed to parse composer.composerData")?;
 
     let count = json
         .get("allComposers")

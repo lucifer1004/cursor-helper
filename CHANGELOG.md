@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--split` flag for exporting sessions to separate files (WI-2026-01-28-004)
+- `--exclude-blank` flag to filter empty sessions (WI-2026-01-28-004)
+
 ### Fixed
 
+- `count_chat_sessions` now counts Composer sessions (consistent with export) (WI-2026-01-28-004)
+- Strip Windows path prefix in stats command (WI-2026-01-28-005)
 - Strip Windows extended-length path prefix in export-chat (WI-2026-01-28-003)
 - Case-insensitive URI comparison for Windows paths (WI-2026-01-28-003)
 

@@ -1,6 +1,6 @@
 [package]
 name = "cursor-helper"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "CLI helper for Cursor IDE operations not exposed in the UI"
 license = "MIT"
