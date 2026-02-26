@@ -10,7 +10,6 @@ use anyhow::{bail, Context, Result};
 use fs_extra::dir::{self, CopyOptions};
 use owo_colors::OwoColorize;
 use rusqlite::Connection;
-use serde_json::Value;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -138,25 +137,15 @@ pub fn execute(
     let new_uri = path_to_file_uri(&new_path)?;
     let old_path_raw = old_path.to_string_lossy().to_string();
     let new_path_raw = new_path.to_string_lossy().to_string();
-
-    // Compute new identifiers
-    let new_folder_id = folder_id::path_to_folder_id(&new_path);
-    let new_workspace_hash = if dry_run {
-        if copy_mode {
-            println!(
-                "  {}",
-                "(New folder would get new birthtime, hash computed at runtime)".yellow()
-            );
-            "<computed-at-runtime>".to_string()
-        } else {
-            estimate_hash_after_move(&old_path, &new_path)?
-        }
+    let estimated_move_hash = if !copy_mode {
+        Some(estimate_hash_after_move(&old_path, &new_path)?)
     } else {
-        workspace::compute_workspace_hash(&new_path)?
+        None
     };
 
+    // Compute new folder ID (before creating destination)
+    let new_folder_id = folder_id::path_to_folder_id(&new_path);
     println!("New folder ID: {}", new_folder_id);
-    println!("New workspace hash: {}", new_workspace_hash);
 
     // Step 1: Copy/Move the project folder
     println!(
@@ -165,6 +154,25 @@ pub fn execute(
     );
     println!("  {} -> {}", old_path.display(), new_path.display());
     copy_or_move(&old_path, &new_path, copy_mode, dry_run)?;
+
+    // Compute new workspace hash after destination exists
+    let new_workspace_hash = if dry_run {
+        if copy_mode {
+            println!(
+                "  {}",
+                "(New folder would get new birthtime, hash computed at runtime)".yellow()
+            );
+            "<computed-at-runtime>".to_string()
+        } else {
+            estimated_move_hash
+                .clone()
+                .context("Failed to estimate moved workspace hash")?
+        }
+    } else {
+        workspace::compute_workspace_hash(&new_path)?
+    };
+
+    println!("New workspace hash: {}", new_workspace_hash);
 
     let mut source_composer_db: Option<PathBuf> = None;
     if copy_mode && !dry_run && old_workspace_dir.exists() {
@@ -325,28 +333,18 @@ pub fn execute(
             );
         }
 
-        let uri_modified = storage::update_global_state_db(
+        let global_modified = storage::update_global_state_db(
             &global_state_db_path,
+            &old_path_raw,
+            &new_path_raw,
             &old_uri,
             &new_uri,
             &old_workspace_hash,
             &new_workspace_hash,
             dry_run,
         )?;
-        let path_modified = if old_path_raw != new_path_raw {
-            storage::update_global_state_db(
-                &global_state_db_path,
-                &old_path_raw,
-                &new_path_raw,
-                &old_workspace_hash,
-                &new_workspace_hash,
-                dry_run,
-            )?
-        } else {
-            false
-        };
 
-        if uri_modified || path_modified {
+        if global_modified {
             println!("  -> Updated global state references");
         } else {
             println!("  -> No matching global state references found");
@@ -438,17 +436,7 @@ fn sync_workspace_composer_index(
 
     let target_data = fetch_composer_data(&target_conn)?;
 
-    let target_has_all_composers = target_data.as_deref().is_some_and(has_all_composers);
-    let mut needs_update = force_index || !target_has_all_composers;
-    if source_data.is_none() && force_index {
-        needs_update = true;
-    }
-
-    if !needs_update {
-        return Ok(false);
-    }
-
-    let mut data_to_write = match source_data {
+    let data_to_write = match source_data {
         Some(data) => data,
         None => target_data.unwrap_or_default(),
     };
@@ -457,7 +445,7 @@ fn sync_workspace_composer_index(
         return Ok(false);
     }
 
-    data_to_write = normalize_composer_data(
+    let normalized = normalize_composer_data(
         &data_to_write,
         old_uri,
         new_uri,
@@ -467,11 +455,24 @@ fn sync_workspace_composer_index(
         new_workspace_hash,
     );
 
+    let needs_update = force_index
+        || data_to_write.contains(old_uri)
+        || data_to_write.contains(old_path)
+        || data_to_write.contains(old_workspace_hash);
+
+    if !needs_update {
+        return Ok(false);
+    }
+
+    if normalized == data_to_write {
+        return Ok(false);
+    }
+
     if dry_run {
         return Ok(true);
     }
 
-    update_composer_data(&target_conn, &data_to_write)?;
+    update_composer_data(&target_conn, &normalized)?;
     Ok(true)
 }
 
@@ -507,14 +508,6 @@ fn fetch_composer_data(conn: &Connection) -> Result<Option<String>> {
     }
 }
 
-fn has_all_composers(data: &str) -> bool {
-    serde_json::from_str::<Value>(data)
-        .ok()
-        .and_then(|v| v.get("allComposers").cloned())
-        .and_then(|v| v.as_array().map(|a| !a.is_empty()))
-        .unwrap_or(false)
-}
-
 fn normalize_composer_data(
     data: &str,
     old_uri: &str,
@@ -524,9 +517,56 @@ fn normalize_composer_data(
     old_workspace_hash: &str,
     new_workspace_hash: &str,
 ) -> String {
-    data.replace(old_uri, new_uri)
-        .replace(old_path, new_path)
-        .replace(old_workspace_hash, new_workspace_hash)
+    let replacements = [
+        (old_uri, new_uri),
+        (old_path, new_path),
+        (old_workspace_hash, new_workspace_hash),
+    ];
+    normalize_text_replacements(data, &replacements)
+}
+
+fn normalize_text_replacements(data: &str, replacements: &[(&str, &str)]) -> String {
+    let replacements: Vec<(&str, &str)> = replacements
+        .iter()
+        .copied()
+        .filter(|(old, new)| old != new)
+        .collect();
+
+    if replacements.is_empty() {
+        return data.to_string();
+    }
+
+    let mut seed = 0usize;
+    let mut working = data.to_string();
+    let mut placeholder_map = Vec::new();
+
+    for (old, _) in &replacements {
+        let mut token = format!("__CURSOR_HELPER_REPLACE_TOKEN_{seed}__");
+        while working.contains(&token)
+            || placeholder_map
+                .iter()
+                .any(|(placeholder, _)| placeholder == &token)
+        {
+            seed += 1;
+            token = format!("__CURSOR_HELPER_REPLACE_TOKEN_{seed}__");
+        }
+
+        working = working.replace(*old, &token);
+        placeholder_map.push((token, *old));
+        seed += 1;
+    }
+
+    let mut normalized = working;
+    for (token, old) in placeholder_map {
+        if let Some((_, new)) = replacements
+            .iter()
+            .find(|(candidate_old, _)| candidate_old == &old)
+        {
+            normalized = normalized.replace(&token, new);
+        }
+    }
+
+    normalized
 }
 
 /// Create backup snapshots before mutating Cursor metadata.
@@ -822,6 +862,8 @@ fn estimate_hash_after_move(old_path: &Path, new_path: &Path) -> Result<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+    use tempfile::TempDir;
 
     #[test]
     fn test_clean_path_basic() {
@@ -877,5 +919,145 @@ mod tests {
         let uri = path_to_file_uri(&path).unwrap();
         assert!(uri.starts_with("file:///"));
         assert!(uri.contains("Users"));
+    }
+
+    #[test]
+    fn test_sync_workspace_composer_index_normalizes_when_all_composers_present() {
+        let temp_dir = TempDir::new().unwrap();
+        let source_db = temp_dir.path().join("source.vscdb");
+        let target_db = temp_dir.path().join("target.vscdb");
+
+        let composer_payload = r#"{"allComposers":[{"id":"file:///old/project/hash_old"}]}"#;
+        let conn = Connection::open(&source_db).unwrap();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES (?1, ?2)",
+            ("composer.composerData", composer_payload),
+        )
+        .unwrap();
+        drop(conn);
+
+        let conn = Connection::open(&target_db).unwrap();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES (?1, ?2)",
+            ("composer.composerData", composer_payload),
+        )
+        .unwrap();
+        drop(conn);
+
+        let updated = sync_workspace_composer_index(
+            Some(&source_db),
+            &target_db,
+            "file:///old/project",
+            "file:///new/project",
+            "/old/project",
+            "/new/project",
+            "hash_old",
+            "hash_new",
+            false,
+            false,
+        )
+        .unwrap();
+
+        assert!(updated);
+
+        let conn = Connection::open(&target_db).unwrap();
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM ItemTable WHERE key = 'composer.composerData'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert!(value.contains("file:///new/project"));
+        assert!(value.contains("hash_new"));
+        assert!(!value.contains("file:///old/project"));
+        assert!(!value.contains("hash_old"));
+    }
+
+    #[test]
+    fn test_sync_workspace_composer_index_no_update_without_stale_references() {
+        let temp_dir = TempDir::new().unwrap();
+        let target_db = temp_dir.path().join("target.vscdb");
+
+        let composer_payload = r#"{"allComposers":[{"id":"file:///new/project/hash_new"}]}"#;
+        let conn = Connection::open(&target_db).unwrap();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES (?1, ?2)",
+            ("composer.composerData", composer_payload),
+        )
+        .unwrap();
+        drop(conn);
+
+        let updated = sync_workspace_composer_index(
+            None,
+            &target_db,
+            "file:///old/project",
+            "file:///new/project",
+            "/old/project",
+            "/new/project",
+            "hash_old",
+            "hash_new",
+            false,
+            false,
+        )
+        .unwrap();
+
+        assert!(!updated);
+    }
+
+    #[test]
+    fn test_normalize_composer_data_avoids_uri_double_expand() {
+        let value = r#"{"allComposers":[{"id":"file:///home/user/project/hash_old","path":"/home/user/project","title":"project"}]}"#;
+
+        let normalized = normalize_composer_data(
+            value,
+            "file:///home/user/project",
+            "file:///home/user/project-copy",
+            "/home/user/project",
+            "/home/user/project-copy",
+            "hash_old",
+            "hash_new",
+        );
+
+        assert_eq!(
+            normalized,
+            r#"{"allComposers":[{"id":"file:///home/user/project-copy/hash_new","path":"/home/user/project-copy","title":"project"}]}"#
+        );
+        assert!(!normalized.contains("file:///home/user/project-copy-copy"));
+    }
+
+    #[test]
+    fn test_normalize_composer_data_handles_encoded_uri() {
+        let value = r#"{"allComposers":[{"id":"file:///home/user/my%20project/hash_old"}]}"#;
+        let normalized = normalize_composer_data(
+            value,
+            "file:///home/user/my%20project",
+            "file:///home/user/my%20project-backup",
+            "/home/user/my project",
+            "/home/user/my project-backup",
+            "hash_old",
+            "hash_new",
+        );
+
+        assert_eq!(
+            normalized,
+            r#"{"allComposers":[{"id":"file:///home/user/my%20project-backup/hash_new"}]}"#
+        );
     }
 }

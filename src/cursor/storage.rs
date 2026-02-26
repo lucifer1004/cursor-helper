@@ -79,10 +79,13 @@ pub fn update_storage_json<P: AsRef<Path>>(
 ///
 /// Updates any exact path/hash strings from old values to new ones, which
 /// helps keep move/copy operations from leaving stale workspace IDs behind.
+#[allow(clippy::too_many_arguments)]
 pub fn update_global_state_db<P: AsRef<Path>>(
     state_db: P,
     old_path: &str,
     new_path: &str,
+    old_uri: &str,
+    new_uri: &str,
     old_workspace_hash: &str,
     new_workspace_hash: &str,
     dry_run: bool,
@@ -98,12 +101,18 @@ pub fn update_global_state_db<P: AsRef<Path>>(
 
     let mut modified = false;
 
-    // Replace both path references and workspace hash references in all known text
-    // columns. This is intentionally conservative to avoid schema-specific assumptions.
+    // Replace path, URI, and workspace hash references in all known text columns.
+    // This is intentionally conservative to avoid schema-specific assumptions and
+    // avoids overlap by applying all replacements through placeholders in-memory.
     let replacements = [
         (old_path, new_path),
+        (old_uri, new_uri),
         (old_workspace_hash, new_workspace_hash),
     ];
+    let normalized_replacements: Vec<(String, String)> = replacements
+        .iter()
+        .map(|(old, new)| (old.to_string(), new.to_string()))
+        .collect();
     let targets = [
         ("ItemTable", "key"),
         ("ItemTable", "value"),
@@ -116,23 +125,85 @@ pub fn update_global_state_db<P: AsRef<Path>>(
             continue;
         }
 
-        for (old, new) in replacements {
-            if old == new {
+        let query = format!("SELECT rowid, {column} FROM {table}");
+        let mut stmt = conn.prepare(&query)?;
+        let mut rows = stmt.query([])?;
+        let mut pending_updates: Vec<(i64, String)> = Vec::new();
+
+        while let Some(row) = rows.next()? {
+            let rowid: i64 = row.get(0)?;
+            let value: Option<String> = row.get(1)?;
+
+            let Some(value) = value else {
+                continue;
+            };
+
+            let normalized = normalize_text_replacements(&value, &normalized_replacements);
+
+            if normalized == value {
                 continue;
             }
 
-            let affected = count_rows_with_reference(&conn, table, column, old)?;
-            if affected > 0 {
+            if dry_run {
                 modified = true;
+                continue;
             }
 
-            if !dry_run {
-                replace_in_column(&conn, table, column, old, new)?;
-            }
+            pending_updates.push((rowid, normalized));
+        }
+
+        for (rowid, normalized) in pending_updates {
+            conn.execute(
+                &format!("UPDATE {table} SET {column} = ?1 WHERE rowid = ?2"),
+                params![normalized, rowid],
+            )
+            .with_context(|| {
+                format!("Failed to update {table}.{column} for row {rowid} in global state DB")
+            })?;
+            modified = true;
         }
     }
 
     Ok(modified)
+}
+
+fn normalize_text_replacements(value: &str, replacements: &[(String, String)]) -> String {
+    let normalized_replacements: Vec<(&str, &str)> = replacements
+        .iter()
+        .filter_map(|(old, new)| (old != new).then_some((old.as_str(), new.as_str())))
+        .collect();
+
+    if normalized_replacements.is_empty() {
+        return value.to_string();
+    }
+
+    let mut token_seed = 0usize;
+    let mut tokens = Vec::new();
+
+    let mut staged = value.to_string();
+    for (old, _) in &normalized_replacements {
+        let mut token = format!("__CURSOR_HELPER_REPLACE_TOKEN_{token_seed}__");
+        while staged.contains(&token) || tokens.iter().any(|(old_token, _)| old_token == &token) {
+            token_seed += 1;
+            token = format!("__CURSOR_HELPER_REPLACE_TOKEN_{token_seed}__");
+        }
+
+        staged = staged.replace(old, &token);
+        tokens.push((token, *old));
+        token_seed += 1;
+    }
+
+    let mut normalized = staged;
+    for (token, old_value) in tokens {
+        if let Some((_, new_value)) = normalized_replacements
+            .iter()
+            .find(|(old, _)| old == &old_value)
+        {
+            normalized = normalized.replace(&token, new_value);
+        }
+    }
+
+    normalized
 }
 
 fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
@@ -164,35 +235,6 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     }
 
     Ok(false)
-}
-
-fn count_rows_with_reference(
-    conn: &Connection,
-    table: &str,
-    column: &str,
-    needle: &str,
-) -> Result<i64> {
-    let query = format!("SELECT COUNT(*) FROM {table} WHERE {column} LIKE '%' || ?1 || '%'");
-    conn.query_row(&query, params![needle], |row| row.get(0))
-        .with_context(|| format!("Failed to count references in {table}.{column}"))
-}
-
-fn replace_in_column(
-    conn: &Connection,
-    table: &str,
-    column: &str,
-    old: &str,
-    new: &str,
-) -> Result<usize> {
-    let query = format!(
-        "UPDATE {table} SET {column} = REPLACE({column}, ?1, ?2) WHERE {column} LIKE '%' || ?1 || '%'"
-    );
-
-    let replaced = conn
-        .execute(&query, params![old, new])
-        .with_context(|| format!("Failed to replace references in {table}.{column}"))?;
-
-    Ok(replaced)
 }
 
 /// A simpler representation of storage.json for reading
@@ -310,6 +352,8 @@ mod tests {
             &db_path,
             "file:///old/path",
             "file:///new/path",
+            "file:///old/path",
+            "file:///new/path",
             "hash-old",
             "hash-new",
             false,
@@ -352,5 +396,105 @@ mod tests {
         assert_eq!(item_value, "meta:file:///new/path/hash-new");
         assert_eq!(disk_key, "composer:hash-new");
         assert_eq!(disk_value, "file:///new/path");
+    }
+
+    #[test]
+    fn test_update_global_state_db_special_chars() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("state-special.vscdb");
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES (?1, ?2)",
+            (
+                "workspace.key.file:///old%20path%2Fwith%25percent/hash_old",
+                "meta:file:///old%20path%2Fwith%25percent",
+            ),
+        )
+        .unwrap();
+        drop(conn);
+
+        let modified = update_global_state_db(
+            &db_path,
+            "file:///old%20path%2Fwith%25percent",
+            "file:///new%20path%2Fwith%25percent",
+            "file:///old%20path%2Fwith%25percent",
+            "file:///new%20path%2Fwith%25percent",
+            "hash_old",
+            "hash-new",
+            false,
+        )
+        .unwrap();
+
+        assert!(modified);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let item: (String, String) = conn
+            .query_row(
+                "SELECT key, value FROM ItemTable WHERE value LIKE 'meta:file:///new%';",
+                [],
+                |row| Ok((row.get(0).unwrap(), row.get(1).unwrap())),
+            )
+            .unwrap();
+
+        assert_eq!(
+            item.0,
+            "workspace.key.file:///new%20path%2Fwith%25percent/hash-new"
+        );
+        assert_eq!(item.1, "meta:file:///new%20path%2Fwith%25percent");
+    }
+
+    #[test]
+    fn test_update_global_state_db_path_then_uri_update_is_safe() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("state-order.vscdb");
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES (?1, ?2)",
+            (
+                "workspace.key.file:///home/user/project",
+                "file:///home/user/project/hash-old",
+            ),
+        )
+        .unwrap();
+        drop(conn);
+
+        let modified = update_global_state_db(
+            &db_path,
+            "/home/user/project",
+            "/home/user/project-copy",
+            "file:///home/user/project",
+            "file:///home/user/project-copy",
+            "hash-old",
+            "hash-new",
+            false,
+        )
+        .unwrap();
+        assert!(modified);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let item_key: String = conn
+            .query_row("SELECT key FROM ItemTable", [], |row| row.get(0))
+            .unwrap();
+        let item_value: String = conn
+            .query_row("SELECT value FROM ItemTable", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(item_key, "workspace.key.file:///home/user/project-copy");
+        assert_eq!(item_value, "file:///home/user/project-copy/hash-new");
+        assert!(!item_value.contains("project-copy-copy"));
+        assert!(!item_key.contains("project-copy-copy"));
+        assert!(modified);
     }
 }
