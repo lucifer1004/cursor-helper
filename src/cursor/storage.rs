@@ -152,7 +152,9 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
         .prepare(&query)
         .with_context(|| format!("Failed to read schema for table: {table}"))?;
 
-    let mut rows = stmt.query([]).with_context(|| format!("Failed to query columns for {table}"))?;
+    let mut rows = stmt
+        .query([])
+        .with_context(|| format!("Failed to query columns for {table}"))?;
     while let Some(row) = rows.next().context("Failed to iterate table info")? {
         let col_name: String = row.get(1)?;
         if col_name == column {
@@ -169,9 +171,7 @@ fn count_rows_with_reference(
     column: &str,
     needle: &str,
 ) -> Result<i64> {
-    let query = format!(
-        "SELECT COUNT(*) FROM {table} WHERE {column} LIKE '%' || ?1 || '%'"
-    );
+    let query = format!("SELECT COUNT(*) FROM {table} WHERE {column} LIKE '%' || ?1 || '%'");
     conn.query_row(&query, params![needle], |row| row.get(0))
         .with_context(|| format!("Failed to count references in {table}.{column}"))
 }
@@ -292,7 +292,10 @@ mod tests {
         .unwrap();
         conn.execute(
             "INSERT INTO ItemTable(key, value) VALUES (?1, ?2)",
-            ("workspace.key.file:///old/path", "meta:file:///old/path/hash-old"),
+            (
+                "workspace.key.file:///old/path",
+                "meta:file:///old/path/hash-old",
+            ),
         )
         .unwrap();
         conn.execute(
