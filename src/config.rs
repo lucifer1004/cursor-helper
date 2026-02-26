@@ -13,7 +13,7 @@ pub fn cursor_projects_dir() -> Result<PathBuf> {
 /// - macOS: ~/Library/Application Support/Cursor/
 /// - Linux: ~/.config/Cursor/
 /// - Windows: %APPDATA%/Cursor/
-fn cursor_config_dir() -> Result<PathBuf> {
+pub fn cursor_config_dir() -> Result<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         let home = dirs::home_dir().context("Could not determine home directory")?;
@@ -44,6 +44,15 @@ pub fn workspace_storage_dir() -> Result<PathBuf> {
 /// - Windows: %APPDATA%/Cursor/User/globalStorage/
 pub fn global_storage_dir() -> Result<PathBuf> {
     Ok(cursor_config_dir()?.join("User").join("globalStorage"))
+}
+
+/// Get Cursor cache directories used by the Electron shell.
+///
+/// These are used for clearing stale in-memory/cache state after copy
+/// operations to force index refresh in the running editor host.
+pub fn cursor_cache_dirs() -> Result<Vec<PathBuf>> {
+    let base = cursor_config_dir()?;
+    Ok(vec![base.join("CachedData"), base.join("GPUCache")])
 }
 
 #[cfg(test)]

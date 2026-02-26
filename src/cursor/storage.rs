@@ -3,6 +3,7 @@
 //! Handles updates to ~/Library/Application Support/Cursor/User/globalStorage/storage.json
 
 use anyhow::{Context, Result};
+use rusqlite::{params, Connection};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -70,6 +71,129 @@ pub fn update_storage_json<P: AsRef<Path>>(
     Ok(modified)
 }
 
+/// Update workspace references embedded in global `state.vscdb`.
+///
+/// Cursor stores several workspace mappings and references in the global database:
+/// - `ItemTable.value` / `ItemTable.key`
+/// - `cursorDiskKV.key` / `cursorDiskKV.value`
+/// This updates any exact path hash strings from old values to new ones, which
+/// helps keep move/copy operations from leaving stale workspace IDs behind.
+pub fn update_global_state_db<P: AsRef<Path>>(
+    state_db: P,
+    old_path: &str,
+    new_path: &str,
+    old_workspace_hash: &str,
+    new_workspace_hash: &str,
+    dry_run: bool,
+) -> Result<bool> {
+    let state_db = state_db.as_ref();
+
+    if !state_db.exists() {
+        return Ok(false);
+    }
+
+    let conn = Connection::open(state_db)
+        .with_context(|| format!("Failed to open global state DB: {}", state_db.display()))?;
+
+    let mut modified = false;
+
+    // Replace both path references and workspace hash references in all known text
+    // columns. This is intentionally conservative to avoid schema-specific assumptions.
+    let replacements = [
+        (old_path, new_path),
+        (old_workspace_hash, new_workspace_hash),
+    ];
+    let targets = [
+        ("ItemTable", "key"),
+        ("ItemTable", "value"),
+        ("cursorDiskKV", "key"),
+        ("cursorDiskKV", "value"),
+    ];
+
+    for (table, column) in targets {
+        if !table_exists(&conn, table)? || !column_exists(&conn, table, column)? {
+            continue;
+        }
+
+        for (old, new) in replacements {
+            if old == new {
+                continue;
+            }
+
+            let affected = count_rows_with_reference(&conn, table, column, old)?;
+            if affected > 0 {
+                modified = true;
+            }
+
+            if !dry_run {
+                replace_in_column(&conn, table, column, old, new)?;
+            }
+        }
+    }
+
+    Ok(modified)
+}
+
+fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+            params![table],
+            |row| row.get(0),
+        )
+        .context("Failed to query sqlite_master")?;
+
+    Ok(count > 0)
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let query = format!("PRAGMA table_info({})", table);
+    let mut stmt = conn
+        .prepare(&query)
+        .with_context(|| format!("Failed to read schema for table: {table}"))?;
+
+    let mut rows = stmt.query([]).with_context(|| format!("Failed to query columns for {table}"))?;
+    while let Some(row) = rows.next().context("Failed to iterate table info")? {
+        let col_name: String = row.get(1)?;
+        if col_name == column {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn count_rows_with_reference(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    needle: &str,
+) -> Result<i64> {
+    let query = format!(
+        "SELECT COUNT(*) FROM {table} WHERE {column} LIKE '%' || ?1 || '%'"
+    );
+    conn.query_row(&query, params![needle], |row| row.get(0))
+        .with_context(|| format!("Failed to count references in {table}.{column}"))
+}
+
+fn replace_in_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    old: &str,
+    new: &str,
+) -> Result<usize> {
+    let query = format!(
+        "UPDATE {table} SET {column} = REPLACE({column}, ?1, ?2) WHERE {column} LIKE '%' || ?1 || '%'"
+    );
+
+    let replaced = conn
+        .execute(&query, params![old, new])
+        .with_context(|| format!("Failed to replace references in {table}.{column}"))?;
+
+    Ok(replaced)
+}
+
 /// A simpler representation of storage.json for reading
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -115,6 +239,7 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+    use tempfile::TempDir;
 
     #[test]
     fn test_update_storage_json() {
@@ -147,5 +272,81 @@ mod tests {
         let content = fs::read_to_string(file.path()).unwrap();
         assert!(content.contains("file:///new/path"));
         assert!(!content.contains("file:///old/path"));
+    }
+
+    #[test]
+    fn test_update_global_state_db() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("state.vscdb");
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES (?1, ?2)",
+            ("workspace.key.file:///old/path", "meta:file:///old/path/hash-old"),
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cursorDiskKV(key, value) VALUES (?1, ?2)",
+            ("composer:hash-old", "file:///old/path"),
+        )
+        .unwrap();
+        drop(conn);
+
+        let modified = update_global_state_db(
+            &db_path,
+            "file:///old/path",
+            "file:///new/path",
+            "hash-old",
+            "hash-new",
+            false,
+        )
+        .unwrap();
+
+        assert!(modified);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let item_key: String = conn
+            .query_row(
+                "SELECT key FROM ItemTable WHERE value LIKE '%new/path%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let item_value: String = conn
+            .query_row(
+                "SELECT value FROM ItemTable WHERE key LIKE '%new/path%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let disk_key: String = conn
+            .query_row(
+                "SELECT key FROM cursorDiskKV WHERE value LIKE '%new/path%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let disk_value: String = conn
+            .query_row(
+                "SELECT value FROM cursorDiskKV WHERE key LIKE '%hash-new%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(item_key, "workspace.key.file:///new/path");
+        assert_eq!(item_value, "meta:file:///new/path/hash-new");
+        assert_eq!(disk_key, "composer:hash-new");
+        assert_eq!(disk_value, "file:///new/path");
     }
 }

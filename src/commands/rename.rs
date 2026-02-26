@@ -9,22 +9,31 @@
 use anyhow::{bail, Context, Result};
 use fs_extra::dir::{self, CopyOptions};
 use owo_colors::OwoColorize;
+use rusqlite::Connection;
+use serde_json::Value;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::UNIX_EPOCH;
 use url::Url;
 
+use super::utils;
 use crate::config;
 use crate::cursor::{folder_id, storage, workspace};
 
 /// Execute the rename command
-pub fn execute(old_path: &str, new_path: &str, dry_run: bool, copy_mode: bool) -> Result<()> {
+pub fn execute(
+    old_path: &str,
+    new_path: &str,
+    dry_run: bool,
+    copy_mode: bool,
+    force_index: bool,
+) -> Result<()> {
     // Normalize and validate paths
     let old_path = normalize_path(old_path)?;
     let new_path = normalize_new_path(new_path)?;
 
-    // Validate
     if !old_path.exists() {
         bail!("Old path does not exist: {}", old_path.display());
     }
@@ -67,30 +76,30 @@ pub fn execute(old_path: &str, new_path: &str, dry_run: bool, copy_mode: bool) -
 
     let old_projects_dir = cursor_projects_dir.join(&old_folder_id);
     let old_workspace_dir = workspace_storage_dir.join(&old_workspace_hash);
+    let storage_json_path = global_storage_dir.join("storage.json");
+    let global_state_db_path = global_storage_dir.join("state.vscdb");
 
     // Mode description
     let mode = if copy_mode { "COPY" } else { "MOVE" };
     let action = if copy_mode { "Copying" } else { "Moving" };
 
     // Print summary
-    println!();
-    println!(
-        "{}",
-        format!("=== Cursor Project {} Tool ===", mode).green()
-    );
-    println!();
+    println!("{}");
+    println!("{}", format!("=== Cursor Project {} Tool ===", mode).green());
+    println!("{}");
     println!("Old path: {}", old_path.display());
     println!("New path: {}", new_path.display());
     println!("Mode: {}", mode);
-    println!();
+    println!("Force index: {}", if force_index { "on" } else { "off" });
+    println!("{}", "");
     println!("Old folder ID: {}", old_folder_id);
     println!("Old workspace hash: {}", old_workspace_hash);
-    println!();
+    println!("{}", "");
 
     // Check if old data exists
     print_exists_status("Cursor projects dir", &old_projects_dir);
     print_exists_status("Workspace storage dir", &old_workspace_dir);
-    println!();
+    println!("{}");
 
     // Confirm (skip in dry-run)
     if !dry_run {
@@ -106,27 +115,37 @@ pub fn execute(old_path: &str, new_path: &str, dry_run: bool, copy_mode: bool) -
         }
     }
 
-    // Step 1: Copy/Move the project folder
-    println!(
-        "{}",
-        format!("Step 1: {} project folder...", action).green()
-    );
-    println!("  {} -> {}", old_path.display(), new_path.display());
-    copy_or_move(&old_path, &new_path, copy_mode, dry_run)?;
+    // Step 0: Create backups for rollback safety
+    if dry_run {
+        println!("{}", "Step 0: Skipping backups in dry-run mode.".yellow());
+    } else {
+        println!("{}", "Step 0: Creating safety backup...".green());
+        if let Some(backup_dir) = create_rename_backup(
+            &old_projects_dir,
+            &old_workspace_dir,
+            &storage_json_path,
+            &global_state_db_path,
+            dry_run,
+        )? {
+            println!("  Backup created at: {}", backup_dir.display());
+        }
+    }
+
+    let old_uri = path_to_file_uri(&old_path)?;
+    let new_uri = path_to_file_uri(&new_path)?;
+    let old_path_raw = old_path.to_string_lossy().to_string();
+    let new_path_raw = new_path.to_string_lossy().to_string();
 
     // Compute new identifiers
     let new_folder_id = folder_id::path_to_folder_id(&new_path);
     let new_workspace_hash = if dry_run {
         if copy_mode {
-            // In copy mode with dry-run, we can't compute the hash
-            // because the new folder doesn't exist yet
             println!(
                 "  {}",
                 "(New folder would get new birthtime, hash computed at runtime)".yellow()
             );
             "<computed-at-runtime>".to_string()
         } else {
-            // Move preserves birthtime, estimate hash with new path
             estimate_hash_after_move(&old_path, &new_path)?
         }
     } else {
@@ -135,6 +154,16 @@ pub fn execute(old_path: &str, new_path: &str, dry_run: bool, copy_mode: bool) -
 
     println!("New folder ID: {}", new_folder_id);
     println!("New workspace hash: {}", new_workspace_hash);
+
+    // Step 1: Copy/Move the project folder
+    println!("{}", format!("Step 1: {} project folder...", action).green());
+    println!("  {} -> {}", old_path.display(), new_path.display());
+    copy_or_move(&old_path, &new_path, copy_mode, dry_run)?;
+
+    let mut source_composer_db: Option<PathBuf> = None;
+    if copy_mode && !dry_run && old_workspace_dir.exists() {
+        source_composer_db = Some(old_workspace_dir.join("state.vscdb"));
+    }
 
     // Step 2: Copy/Move ~/.cursor/projects/
     let new_projects_dir = cursor_projects_dir.join(&new_folder_id);
@@ -173,8 +202,6 @@ pub fn execute(old_path: &str, new_path: &str, dry_run: bool, copy_mode: bool) -
         let workspace_json_path = new_workspace_dir.join("workspace.json");
         println!("{}", "Step 4: Updating workspace.json...".green());
 
-        let new_uri = path_to_file_uri(&new_path)?;
-
         if dry_run {
             println!(
                 "  {} Write to {}:",
@@ -191,35 +218,152 @@ pub fn execute(old_path: &str, new_path: &str, dry_run: bool, copy_mode: bool) -
         println!("{}", "Step 3: No workspaceStorage data to migrate".yellow());
     }
 
-    // Step 5: Update storage.json
-    let storage_json_path = global_storage_dir.join("storage.json");
-    if storage_json_path.exists() {
-        println!(
-            "{}",
-            "Step 5: Updating globalStorage/storage.json...".green()
-        );
+    // Step 5: Ensure composer index in workspace state DB
+    if !dry_run && new_workspace_dir.exists() {
+        let new_workspace_db = new_workspace_dir.join("state.vscdb");
+        if new_workspace_db.exists() {
+            println!("{}", "Step 5: Synchronizing composer index...".green());
+            let updated = sync_workspace_composer_index(
+                source_composer_db.as_deref(),
+                &new_workspace_db,
+                &old_uri,
+                &new_uri,
+                &old_path_raw,
+                &new_path_raw,
+                &old_workspace_hash,
+                &new_workspace_hash,
+                force_index,
+                dry_run,
+            )?;
+            if updated {
+                println!("  -> Composer index synchronized");
+            } else {
+                println!("  -> Composer index already complete");
+            }
+        } else {
+            println!("  -> No workspace state DB found; skipping composer index sync");
+        }
+    } else if dry_run {
+        println!("{}", "Step 5: Composer index sync skipped in dry-run".yellow());
+    } else {
+        println!("{}", "Step 5: No workspace state DB available for sync".yellow());
+    }
 
-        let old_uri = path_to_file_uri(&old_path)?;
-        let new_uri = path_to_file_uri(&new_path)?;
+    // Step 6: Update storage.json
+    if storage_json_path.exists() {
+        println!("{}", "Step 6: Updating globalStorage/storage.json...".green());
 
         if dry_run {
-            println!("  {} Update {} -> {}", "[DRY-RUN]".blue(), old_uri, new_uri);
+            println!(
+                "  {} Update {} -> {}",
+                "[DRY-RUN]".blue(),
+                old_uri,
+                new_uri
+            );
         }
 
-        let modified =
-            storage::update_storage_json(&storage_json_path, &old_uri, &new_uri, dry_run)?;
+        let mut modified = storage::update_storage_json(&storage_json_path, &old_uri, &new_uri, dry_run)?;
 
-        if modified {
-            println!("  -> Updated workspace references");
+        let hash_modified = old_workspace_hash != new_workspace_hash;
+        if hash_modified && !dry_run {
+            println!(
+                "  Note: storage.json hash migration skipped (format may be unsupported): {} -> {}",
+                old_workspace_hash, new_workspace_hash
+            );
+        } else if dry_run {
+            println!(
+                "  {} Hash migration in storage.json would run if needed",
+                "[DRY-RUN]".blue()
+            );
+        }
+
+        if old_path_raw != new_path_raw {
+            let path_text_modified =
+                storage::update_storage_json(&storage_json_path, &old_path_raw, &new_path_raw, dry_run)?;
+            modified = modified || path_text_modified;
+            if path_text_modified {
+                println!("  -> Updated raw path text in storage.json");
+            }
+        }
+
+        if !modified && !hash_modified {
+            println!("  -> No matching storage.json updates applied");
+        }
+    } else {
+        println!("{}", "Step 6: No storage.json file found".yellow());
+    }
+
+    // Step 7: Update global state DB
+    if global_state_db_path.exists() {
+        println!("{}", "Step 7: Updating globalStorage/state.vscdb...".green());
+
+        if dry_run {
+            println!(
+                "  {} Update {} -> {}",
+                "[DRY-RUN]".blue(),
+                old_uri,
+                new_uri
+            );
+            println!(
+                "  {} Update workspace hash {} -> {}",
+                "[DRY-RUN]".blue(),
+                old_workspace_hash,
+                new_workspace_hash
+            );
+        }
+
+        let uri_modified = storage::update_global_state_db(
+            &global_state_db_path,
+            &old_uri,
+            &new_uri,
+            &old_workspace_hash,
+            &new_workspace_hash,
+            dry_run,
+        )?;
+        let path_modified = if old_path_raw != new_path_raw {
+            storage::update_global_state_db(
+                &global_state_db_path,
+                &old_path_raw,
+                &new_path_raw,
+                &old_workspace_hash,
+                &new_workspace_hash,
+                dry_run,
+            )?
         } else {
-            println!("  -> No matching references found");
+            false
+        };
+
+        if uri_modified || path_modified {
+            println!("  -> Updated global state references");
+        } else {
+            println!("  -> No matching global state references found");
         }
+    } else {
+        println!("{}", "Step 7: No global state DB found".yellow());
+    }
+
+    // Step 8: Clear stale cache directories
+    println!("{}", "Step 8: Clearing stale cache data...".green());
+    if !dry_run {
+        if let Ok(true) = new_workspace_dir.exists().then_some(true) {
+            clear_path(&new_workspace_dir.join("anysphere.cursor-retrieval"), dry_run)?;
+        } else {
+            println!("  -> No workspace cache directory for new path");
+        }
+
+        for cache_dir in config::cursor_cache_dirs()? {
+            if cache_dir.exists() {
+                clear_path(&cache_dir, dry_run)?;
+            }
+        }
+    } else {
+        println!("  -> Cache clear skipped in dry-run");
     }
 
     // Done!
-    println!();
+    println!("{}");
     println!("{}", format!("=== {} complete! ===", mode).green());
-    println!();
+    println!("{}");
 
     if dry_run {
         println!("This was a dry-run. No changes were made.");
@@ -228,13 +372,223 @@ pub fn execute(old_path: &str, new_path: &str, dry_run: bool, copy_mode: bool) -
         println!("You can now open {} in Cursor.", new_path.display());
         println!("Your chat history and workspace settings should be preserved.");
         if copy_mode {
-            println!();
+            println!("{}");
             println!(
                 "Original project at {} was kept intact.",
                 old_path.display()
             );
         }
     }
+
+    Ok(())
+}
+
+/// Update composer index in workspace state DB when copied from an existing workspace
+fn sync_workspace_composer_index(
+    source_db_path: Option<&Path>,
+    target_db_path: &Path,
+    old_uri: &str,
+    new_uri: &str,
+    old_path: &str,
+    new_path: &str,
+    old_workspace_hash: &str,
+    new_workspace_hash: &str,
+    force_index: bool,
+    dry_run: bool,
+) -> Result<bool> {
+    let target_conn = Connection::open(target_db_path)
+        .with_context(|| format!("Failed to open target workspace DB: {}", target_db_path.display()))?;
+
+    let source_data = if let Some(source_db_path) = source_db_path {
+        if source_db_path.exists() {
+            let source_conn = Connection::open(source_db_path)
+                .with_context(|| format!("Failed to open source workspace DB: {}", source_db_path.display()))?;
+            fetch_composer_data(&source_conn)?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let target_data = fetch_composer_data(&target_conn)?;
+
+    let target_has_all_composers = target_data
+        .as_deref()
+        .is_some_and(|data| has_all_composers(data));
+    let mut needs_update = force_index || !target_has_all_composers;
+    if source_data.is_none() && force_index {
+        needs_update = true;
+    }
+
+    if !needs_update {
+        return Ok(false);
+    }
+
+    let mut data_to_write = match source_data {
+        Some(data) => data,
+        None => target_data.unwrap_or_default(),
+    };
+
+    if data_to_write.is_empty() {
+        return Ok(false);
+    }
+
+    data_to_write = normalize_composer_data(
+        &data_to_write,
+        old_uri,
+        new_uri,
+        old_path,
+        new_path,
+        old_workspace_hash,
+        new_workspace_hash,
+    );
+
+    if dry_run {
+        return Ok(true);
+    }
+
+    update_composer_data(&target_conn, &data_to_write)?;
+    Ok(true)
+}
+
+/// Update composer.composerData in ItemTable
+fn update_composer_data(conn: &Connection, data: &str) -> Result<()> {
+    let updated = conn
+        .execute(
+            "UPDATE ItemTable SET value = ?1 WHERE key = 'composer.composerData'",
+            [data],
+        )
+        .with_context(|| "Failed to update composer.composerData")?;
+
+    if updated == 0 {
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES ('composer.composerData', ?1)",
+            [data],
+        )
+        .with_context(|| "Failed to insert composer.composerData")?;
+    }
+
+    Ok(())
+}
+
+fn fetch_composer_data(conn: &Connection) -> Result<Option<String>> {
+    match conn.query_row(
+        "SELECT value FROM ItemTable WHERE key = 'composer.composerData'",
+        [],
+        |row| row.get::<_, String>(0),
+    ) {
+        Ok(value) => Ok(Some(value)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e).context("Failed to query composer.composerData"),
+    }
+}
+
+fn has_all_composers(data: &str) -> bool {
+    serde_json::from_str::<Value>(data)
+        .ok()
+        .and_then(|v| v.get("allComposers").cloned())
+        .and_then(|v| v.as_array().map(|a| !a.is_empty()))
+        .unwrap_or(false)
+}
+
+fn normalize_composer_data(
+    data: &str,
+    old_uri: &str,
+    new_uri: &str,
+    old_path: &str,
+    new_path: &str,
+    old_workspace_hash: &str,
+    new_workspace_hash: &str,
+) -> String {
+    data.replace(old_uri, new_uri)
+        .replace(old_path, new_path)
+        .replace(old_workspace_hash, new_workspace_hash)
+}
+
+/// Create backup snapshots before mutating Cursor metadata.
+fn create_rename_backup(
+    old_projects_dir: &Path,
+    old_workspace_dir: &Path,
+    storage_json_path: &Path,
+    global_state_db_path: &Path,
+    dry_run: bool,
+) -> Result<Option<PathBuf>> {
+    if dry_run {
+        return Ok(None);
+    }
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let backup_root = std::env::temp_dir().join(format!(
+        "cursor-helper-rename-backup-{timestamp}"
+    ));
+    fs::create_dir_all(&backup_root).with_context(|| {
+        format!("Failed to create backup directory: {}", backup_root.display())
+    })?;
+
+    if old_projects_dir.exists() {
+        let backup_projects = backup_root.join("old_projects");
+        utils::copy_dir(old_projects_dir, &backup_projects)?;
+        println!("  Backup projects: {}", backup_projects.display());
+    }
+
+    if old_workspace_dir.exists() {
+        let backup_workspace = backup_root.join("old_workspace");
+        utils::copy_dir(old_workspace_dir, &backup_workspace)?;
+        println!("  Backup workspaceStorage: {}", backup_workspace.display());
+    }
+
+    if storage_json_path.exists() {
+        let target = backup_root.join("storage.json");
+        fs::copy(storage_json_path, &target)
+            .with_context(|| {
+                format!("Failed to backup {} to {}", storage_json_path.display(), target.display())
+            })?;
+        println!("  Backup storage.json: {}", target.display());
+    }
+
+    if global_state_db_path.exists() {
+        let target = backup_root.join("state.vscdb");
+        fs::copy(global_state_db_path, &target)
+            .with_context(|| {
+                format!(
+                    "Failed to backup {} to {}",
+                    global_state_db_path.display(),
+                    target.display()
+                )
+            })?;
+        println!("  Backup global state DB: {}", target.display());
+    }
+
+    Ok(Some(backup_root))
+}
+
+/// Clear stale cache files or directories.
+fn clear_path(path: &Path, dry_run: bool) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    if dry_run {
+        println!(
+            "  {} Remove {} (dry-run)",
+            "[DRY-RUN]".blue(),
+            path.display()
+        );
+        return Ok(());
+    }
+
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+            .with_context(|| format!("Failed to remove directory: {}", path.display()))?;
+    } else {
+        fs::remove_file(path)
+            .with_context(|| format!("Failed to remove file: {}", path.display()))?;
+    }
+    println!("  -> Removed: {}", path.display());
 
     Ok(())
 }
@@ -428,8 +782,6 @@ fn path_to_file_uri(path: &Path) -> Result<String> {
 
 /// Estimate workspace hash after a move (uses old birthtime with new path)
 fn estimate_hash_after_move(old_path: &Path, new_path: &Path) -> Result<String> {
-    use std::time::UNIX_EPOCH;
-
     let metadata = fs::metadata(old_path)?;
     let created = metadata.created()?;
     let duration = created.duration_since(UNIX_EPOCH)?;
@@ -453,14 +805,12 @@ mod tests {
 
     #[test]
     fn test_clean_path_with_current_dir() {
-        // . components should be removed
         let path = PathBuf::from("/home/./user/./project");
         assert_eq!(clean_path(&path), PathBuf::from("/home/user/project"));
     }
 
     #[test]
     fn test_clean_path_with_parent_dir() {
-        // .. should navigate up
         let path = PathBuf::from("/home/user/../admin/project");
         assert_eq!(clean_path(&path), PathBuf::from("/home/admin/project"));
     }

@@ -39,6 +39,10 @@ enum Commands {
         /// Copy instead of move (keeps original project intact)
         #[arg(short, long)]
         copy: bool,
+
+        /// Force a full composer index rebuild after copy
+        #[arg(long)]
+        force_index: bool,
     },
 
     /// List all Cursor projects
@@ -168,11 +172,12 @@ fn main() -> Result<()> {
             new_path,
             dry_run,
             copy,
+            force_index,
         } => {
             if dry_run {
                 println!("{}", "(DRY-RUN MODE - no changes will be made)".blue());
             }
-            commands::rename::execute(&old_path, &new_path, dry_run, copy)?;
+            commands::rename::execute(&old_path, &new_path, dry_run, copy, force_index)?;
         }
 
         Commands::List {
