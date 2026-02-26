@@ -280,7 +280,7 @@ pub fn execute(
             println!("  {} Update {} -> {}", "[DRY-RUN]".blue(), old_uri, new_uri);
         }
 
-        let mut modified =
+        let modified =
             storage::update_storage_json(&storage_json_path, &old_uri, &new_uri, dry_run)?;
 
         let hash_modified = old_workspace_hash != new_workspace_hash;
@@ -294,19 +294,6 @@ pub fn execute(
                 "  {} Hash migration in storage.json would run if needed",
                 "[DRY-RUN]".blue()
             );
-        }
-
-        if old_path_raw != new_path_raw {
-            let path_text_modified = storage::update_storage_json(
-                &storage_json_path,
-                &old_path_raw,
-                &new_path_raw,
-                dry_run,
-            )?;
-            modified = modified || path_text_modified;
-            if path_text_modified {
-                println!("  -> Updated raw path text in storage.json");
-            }
         }
 
         if !modified && !hash_modified {
