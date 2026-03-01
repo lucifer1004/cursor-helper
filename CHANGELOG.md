@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-03-01
+
 ### Added
 
 - Add `--force-index` option for `rename --copy` to force composer index rebuild (WI-2026-03-01-001)
