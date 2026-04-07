@@ -2,7 +2,6 @@
 
 use anyhow::{Context, Result};
 use fs_extra::dir::{self, CopyOptions};
-use rusqlite::Connection;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -57,67 +56,9 @@ pub fn copy_dir_contents(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Count chat sessions in a workspace directory by querying state.vscdb
-///
-/// Counts Composer sessions from `composer.composerData` which contain actual
-/// exportable chat content. Previously counted old `workbench.panel.aichat.*`
-/// keys which are orphaned UI references without content.
-///
-/// Returns 0 if the database doesn't exist or has no chat data.
-/// Returns an error for actual database problems (corruption, permissions).
-pub fn count_chat_sessions(workspace_dir: &Path) -> Result<usize> {
-    let db_path = workspace_dir.join("state.vscdb");
-
-    if !db_path.exists() {
-        return Ok(0);
-    }
-
-    // Open database in read-only mode
-    let conn = Connection::open_with_flags(
-        &db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .with_context(|| format!("Failed to open database: {}", db_path.display()))?;
-
-    // Get composer.composerData which contains the list of Composer sessions
-    // QueryReturnedNoRows means no chat data exists (0 sessions), not an error
-    let composer_data: Option<String> = match conn.query_row(
-        "SELECT value FROM ItemTable WHERE key = 'composer.composerData'",
-        [],
-        |row| row.get(0),
-    ) {
-        Ok(data) => Some(data),
-        Err(rusqlite::Error::QueryReturnedNoRows) => None,
-        Err(e) => {
-            return Err(e)
-                .with_context(|| format!("Failed to query chat data from: {}", db_path.display()))
-        }
-    };
-
-    let Some(data) = composer_data else {
-        return Ok(0);
-    };
-
-    // Parse JSON to count sessions
-    let json: serde_json::Value = serde_json::from_str(&data)
-        .with_context(|| format!("Corrupted chat data in: {}", db_path.display()))?;
-
-    let count = json
-        .get("allComposers")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter(|c| {
-                    // Count non-archived sessions (consistent with default export behavior)
-                    !c.get("isArchived")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                })
-                .count()
-        })
-        .unwrap_or(0);
-
-    Ok(count)
+/// Count stable sessions when discovery data is available.
+pub fn count_chat_sessions_if_available(workspace_dir: &Path) -> Result<Option<usize>> {
+    crate::cursor::chat_sessions::count_workspace_sessions_if_available(workspace_dir, false)
 }
 
 /// Calculate total size of a directory

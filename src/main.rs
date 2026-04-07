@@ -189,7 +189,10 @@ fn main() -> Result<()> {
                 filter,
                 limit,
             };
-            let output = commands::list::execute(options)?;
+            let (output, warnings) = commands::list::execute(options)?;
+            if let Some(warnings) = warnings {
+                eprintln!("Warnings:\n{}", warnings);
+            }
             println!("{}", output);
         }
 

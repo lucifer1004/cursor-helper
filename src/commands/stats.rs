@@ -14,7 +14,7 @@ pub struct Stats {
     pub project_path: PathBuf,
 
     /// Number of chat sessions
-    pub chat_sessions: usize,
+    pub chat_sessions: Option<usize>,
 
     /// Size of workspace storage in bytes
     pub workspace_size: u64,
@@ -63,11 +63,13 @@ pub fn stats(project_path: Option<PathBuf>) -> Result<Stats> {
     let (workspace_size, chat_sessions, workspace_hash) = match &workspace_dir {
         Some(dir) => {
             let size = utils::calculate_dir_size(dir).unwrap_or(0);
-            let chats = utils::count_chat_sessions(dir).unwrap_or(0);
+            let chats = utils::count_chat_sessions_if_available(dir).with_context(|| {
+                format!("Failed to discover chat sessions in {}", dir.display())
+            })?;
             let hash = dir.file_name().map(|n| n.to_string_lossy().to_string());
             (size, chats, hash)
         }
-        None => (0, 0, None),
+        None => (0, Some(0), None),
     };
 
     Ok(Stats {
@@ -95,7 +97,13 @@ pub fn format_stats(stats: &Stats) -> String {
 
     lines.push(String::new()); // blank line
 
-    lines.push(format!("Chat Sessions: {}", stats.chat_sessions));
+    lines.push(format!(
+        "Chat Sessions: {}",
+        stats
+            .chat_sessions
+            .map(|count| count.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
     lines.push(format!(
         "Workspace Storage: {}",
         utils::format_size(stats.workspace_size)
@@ -119,8 +127,23 @@ mod tests {
     #[test]
     fn test_stats_default() {
         let stats = Stats::default();
-        assert_eq!(stats.chat_sessions, 0);
+        assert_eq!(stats.chat_sessions, None);
         assert_eq!(stats.workspace_size, 0);
         assert_eq!(stats.projects_size, 0);
+    }
+
+    #[test]
+    fn test_format_stats_unknown_chat_count() {
+        let stats = Stats {
+            project_path: PathBuf::from("/tmp/project"),
+            chat_sessions: None,
+            workspace_size: 0,
+            projects_size: 0,
+            folder_id: "folder-id".to_string(),
+            workspace_hash: None,
+        };
+
+        let formatted = format_stats(&stats);
+        assert!(formatted.contains("Chat Sessions: unknown"));
     }
 }

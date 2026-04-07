@@ -11,6 +11,13 @@ use url::Url;
 use super::utils;
 use crate::config;
 
+#[derive(Debug)]
+struct ProjectLoadWarning {
+    folder_id: String,
+    display_path: PathBuf,
+    message: String,
+}
+
 /// Remote connection type for vscode-remote:// URLs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteType {
@@ -69,16 +76,32 @@ pub struct Project {
     /// When the project was last modified
     pub last_modified: Option<SystemTime>,
 
-    /// Number of chat sessions found
-    pub chat_count: usize,
+    /// Number of chat sessions found, if discovery succeeded
+    pub chat_count: Option<usize>,
+}
+
+#[derive(Debug, Default)]
+struct ListWarnings {
+    entries: Vec<ProjectLoadWarning>,
+}
+
+impl ListWarnings {
+    fn push(&mut self, folder_id: String, display_path: PathBuf, message: String) {
+        self.entries.push(ProjectLoadWarning {
+            folder_id,
+            display_path,
+            message,
+        });
+    }
 }
 
 /// List all Cursor projects
-pub fn list(workspace_storage_dir: PathBuf) -> Result<Vec<Project>> {
+fn list(workspace_storage_dir: PathBuf) -> Result<(Vec<Project>, ListWarnings)> {
     let mut projects = Vec::new();
+    let mut warnings = ListWarnings::default();
 
     if !workspace_storage_dir.exists() {
-        return Ok(projects);
+        return Ok((projects, warnings));
     }
 
     // Read all entries in workspace storage
@@ -135,9 +158,22 @@ pub fn list(workspace_storage_dir: PathBuf) -> Result<Vec<Project>> {
         // Get last modified time
         let last_modified = entry.metadata()?.modified().ok();
 
-        // Count chat sessions (default to 0 on error to avoid one bad project
-        // breaking the entire list - the project path is still shown)
-        let chat_count = utils::count_chat_sessions(&project_dir).unwrap_or(0);
+        let chat_count = match utils::count_chat_sessions_if_available(&project_dir) {
+            Ok(Some(count)) => Some(count),
+            Ok(None) => {
+                warnings.push(
+                    folder_id.clone(),
+                    parsed.path.clone(),
+                    "Chat discovery unavailable: no local session registry and global registry could not be read"
+                        .to_string(),
+                );
+                None
+            }
+            Err(err) => {
+                warnings.push(folder_id.clone(), parsed.path.clone(), err.to_string());
+                None
+            }
+        };
 
         projects.push(Project {
             folder_id,
@@ -155,7 +191,7 @@ pub fn list(workspace_storage_dir: PathBuf) -> Result<Vec<Project>> {
             .then_with(|| a.path.cmp(&b.path))
     });
 
-    Ok(projects)
+    Ok((projects, warnings))
 }
 
 /// Options for the list command
@@ -173,11 +209,11 @@ pub struct ListOptions {
 }
 
 /// Execute the list command and return formatted output
-pub fn execute(options: ListOptions) -> Result<String> {
+pub fn execute(options: ListOptions) -> Result<(String, Option<String>)> {
     let workspace_storage_dir = config::workspace_storage_dir()
         .context("Failed to determine workspace storage directory")?;
 
-    let mut projects = list(workspace_storage_dir)?;
+    let (mut projects, warnings) = list(workspace_storage_dir)?;
 
     // Apply filter
     if let Some(ref filter_str) = options.filter {
@@ -197,7 +233,11 @@ pub fn execute(options: ListOptions) -> Result<String> {
             projects.sort_by(|a, b| a.path.cmp(&b.path));
         }
         "chats" => {
-            projects.sort_by(|a, b| b.chat_count.cmp(&a.chat_count));
+            projects.sort_by(|a, b| {
+                b.chat_count
+                    .cmp(&a.chat_count)
+                    .then_with(|| a.path.cmp(&b.path))
+            });
         }
         _ => {
             // Default (including "modified"): already sorted by modified in list()
@@ -234,7 +274,10 @@ pub fn execute(options: ListOptions) -> Result<String> {
 
     for project in &projects {
         let path_str = project.path.to_string_lossy().to_string();
-        let chat_str = project.chat_count.to_string();
+        let chat_str = project
+            .chat_count
+            .map(|count| count.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
         let remote_str = match &project.remote {
             Some(r) => format!("{}:{}", r.remote_type, r.name),
             None => "-".to_string(),
@@ -272,7 +315,28 @@ pub fn execute(options: ListOptions) -> Result<String> {
         output.push_str(&format!("\n\n{} projects found", total_count));
     }
 
-    Ok(output)
+    let displayed_folder_ids: std::collections::HashSet<&str> = projects
+        .iter()
+        .map(|project| project.folder_id.as_str())
+        .collect();
+    let filtered_warning_entries = warnings
+        .entries
+        .into_iter()
+        .filter(|warning| displayed_folder_ids.contains(warning.folder_id.as_str()))
+        .collect::<Vec<_>>();
+    let warning_output = if filtered_warning_entries.is_empty() {
+        None
+    } else {
+        Some(
+            filtered_warning_entries
+                .iter()
+                .map(|warning| format!("- {}: {}", warning.display_path.display(), warning.message))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    };
+
+    Ok((output, warning_output))
 }
 
 /// Parsed URL result containing path and optional remote info
@@ -466,10 +530,57 @@ mod tests {
                 name: "myserver".to_string(),
             }),
             last_modified: None,
-            chat_count: 5,
+            chat_count: Some(5),
         };
         assert_eq!(project.folder_id, "abc123");
-        assert_eq!(project.chat_count, 5);
+        assert_eq!(project.chat_count, Some(5));
         assert!(project.remote.is_some());
+    }
+
+    #[test]
+    fn test_chat_count_unknown_displays_as_unknown() {
+        let project = Project {
+            folder_id: "abc123".to_string(),
+            path: PathBuf::from("/test/path"),
+            remote: None,
+            last_modified: None,
+            chat_count: None,
+        };
+
+        let chat_str = project
+            .chat_count
+            .map(|count| count.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        assert_eq!(chat_str, "unknown");
+    }
+
+    #[test]
+    fn test_sort_by_chats_places_unknown_last() {
+        let mut projects = vec![
+            Project {
+                folder_id: "a".to_string(),
+                path: PathBuf::from("/a"),
+                remote: None,
+                last_modified: None,
+                chat_count: None,
+            },
+            Project {
+                folder_id: "b".to_string(),
+                path: PathBuf::from("/b"),
+                remote: None,
+                last_modified: None,
+                chat_count: Some(2),
+            },
+        ];
+
+        projects.sort_by(|a, b| {
+            b.chat_count
+                .cmp(&a.chat_count)
+                .then_with(|| a.path.cmp(&b.path))
+        });
+
+        assert_eq!(projects[0].folder_id, "b");
+        assert_eq!(projects[1].folder_id, "a");
     }
 }

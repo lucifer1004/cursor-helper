@@ -3,3 +3,4 @@ target/
 .claude/settings.local.json
 *.tar.gz
 .vscode/
+.cursor/
