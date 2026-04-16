@@ -2,11 +2,13 @@
 
 use anyhow::{Context, Result};
 use percent_encoding::percent_decode_str;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::cursor::sqlite_value::query_optional_utf8_string_like_value;
 
 const GLOBAL_HEADERS_KEY: &str = "composer.composerHeaders";
 const LOCAL_COMPOSER_DATA_KEY: &str = "composer.composerData";
@@ -246,22 +248,22 @@ fn load_legacy_local_sessions(
 }
 
 fn query_item_table_value(conn: &Connection, key: &str) -> Result<Option<String>> {
-    conn.query_row(
+    query_optional_utf8_string_like_value(
+        conn,
         "SELECT value FROM ItemTable WHERE key = ?1",
-        rusqlite::params![key],
-        |row| row.get::<_, String>(0),
+        key,
+        "value",
     )
-    .optional()
     .with_context(|| format!("Failed to query ItemTable for key: {}", key))
 }
 
 fn query_cursor_disk_value(conn: &Connection, key: &str) -> Result<Option<String>> {
-    conn.query_row(
+    query_optional_utf8_string_like_value(
+        conn,
         "SELECT value FROM cursorDiskKV WHERE key = ?1",
-        rusqlite::params![key],
-        |row| row.get::<_, String>(0),
+        key,
+        "value",
     )
-    .optional()
     .with_context(|| format!("Failed to query cursorDiskKV for key: {}", key))
 }
 

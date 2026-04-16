@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 
 use super::utils;
 use crate::cursor::chat_sessions;
+use crate::cursor::sqlite_value::query_optional_utf8_value;
 
 /// Output format for chat export
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -393,13 +394,14 @@ fn fetch_session_messages(
     let composer_key = format!("composerData:{}", composer_id);
 
     // Get composer data (stored as TEXT in cursorDiskKV)
-    let composer_str: String = match conn.query_row(
+    let Some(composer_str) = query_optional_utf8_value(
+        conn,
         "SELECT value FROM cursorDiskKV WHERE key = ?1",
-        rusqlite::params![&composer_key],
-        |row| row.get::<_, String>(0),
-    ) {
-        Ok(s) => s,
-        Err(_) => return Ok(vec![]), // Session not found in global storage
+        &composer_key,
+    )
+    .ok()
+    .flatten() else {
+        return Ok(vec![]);
     };
 
     let composer_data: serde_json::Value = serde_json::from_str(&composer_str)?;
@@ -422,13 +424,13 @@ fn fetch_session_messages(
 
         // Fetch bubble content
         let bubble_key = format!("bubbleId:{}:{}", composer_id, bubble_id);
-        let bubble_str: Option<String> = conn
-            .query_row(
-                "SELECT value FROM cursorDiskKV WHERE key = ?",
-                [&bubble_key],
-                |row| row.get(0),
-            )
-            .ok();
+        let bubble_str = query_optional_utf8_value(
+            conn,
+            "SELECT value FROM cursorDiskKV WHERE key = ?1",
+            &bubble_key,
+        )
+        .ok()
+        .flatten();
 
         if let Some(json_str) = bubble_str {
             if let Ok(bubble) = serde_json::from_str::<serde_json::Value>(&json_str) {

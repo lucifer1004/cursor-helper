@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use super::sqlite_value::Utf8SqlValue;
+
 /// Update workspace references in storage.json
 ///
 /// This updates:
@@ -96,7 +98,7 @@ pub fn update_global_state_db<P: AsRef<Path>>(
         return Ok(false);
     }
 
-    let conn = Connection::open(state_db)
+    let mut conn = Connection::open(state_db)
         .with_context(|| format!("Failed to open global state DB: {}", state_db.display()))?;
 
     let mut modified = false;
@@ -120,53 +122,93 @@ pub fn update_global_state_db<P: AsRef<Path>>(
         ("cursorDiskKV", "value"),
     ];
 
+    if dry_run {
+        for (table, column) in targets {
+            if !table_exists(&conn, table)? || !column_exists(&conn, table, column)? {
+                continue;
+            }
+
+            let query = format!("SELECT {column} FROM {table}");
+            let mut stmt = conn.prepare(&query)?;
+            let mut rows = stmt.query([])?;
+
+            while let Some(row) = rows.next()? {
+                let value = Utf8SqlValue::from_row(row, 0)?;
+
+                let Some(value) = value else {
+                    continue;
+                };
+
+                if !has_workspace_scoped_reference(value.as_str(), &normalized_replacements) {
+                    continue;
+                }
+
+                let normalized =
+                    normalize_text_replacements(value.as_str(), &normalized_replacements);
+                if normalized != value.as_str() {
+                    return Ok(true);
+                }
+            }
+        }
+
+        return Ok(false);
+    }
+
+    let tx = conn
+        .transaction()
+        .with_context(|| format!("Failed to start transaction for: {}", state_db.display()))?;
+
     for (table, column) in targets {
-        if !table_exists(&conn, table)? || !column_exists(&conn, table, column)? {
+        if !table_exists(&tx, table)? || !column_exists(&tx, table, column)? {
             continue;
         }
 
         let query = format!("SELECT rowid, {column} FROM {table}");
-        let mut stmt = conn.prepare(&query)?;
+        let mut stmt = tx.prepare(&query)?;
         let mut rows = stmt.query([])?;
-        let mut pending_updates: Vec<(i64, String)> = Vec::new();
+        let mut pending_updates: Vec<(i64, Utf8SqlValue)> = Vec::new();
 
         while let Some(row) = rows.next()? {
             let rowid: i64 = row.get(0)?;
-            let value: Option<String> = row.get(1)?;
+            let value = Utf8SqlValue::from_row(row, 1)?;
 
             let Some(value) = value else {
                 continue;
             };
 
-            if !has_workspace_scoped_reference(&value, &normalized_replacements) {
+            if !has_workspace_scoped_reference(value.as_str(), &normalized_replacements) {
                 continue;
             }
 
-            let normalized = normalize_text_replacements(&value, &normalized_replacements);
+            let normalized = normalize_text_replacements(value.as_str(), &normalized_replacements);
 
-            if normalized == value {
+            if normalized == value.as_str() {
                 continue;
             }
 
-            if dry_run {
-                modified = true;
-                continue;
-            }
-
+            let normalized = match value {
+                Utf8SqlValue::Text(_) => Utf8SqlValue::Text(normalized),
+                Utf8SqlValue::Blob(_) => Utf8SqlValue::Blob(normalized.into_bytes()),
+            };
             pending_updates.push((rowid, normalized));
         }
 
         for (rowid, normalized) in pending_updates {
-            conn.execute(
-                &format!("UPDATE {table} SET {column} = ?1 WHERE rowid = ?2"),
-                params![normalized, rowid],
-            )
-            .with_context(|| {
-                format!("Failed to update {table}.{column} for row {rowid} in global state DB")
-            })?;
+            normalized
+                .write_back(
+                    &tx,
+                    &format!("UPDATE {table} SET {column} = ?1 WHERE rowid = ?2"),
+                    rowid,
+                )
+                .with_context(|| {
+                    format!("Failed to update {table}.{column} for row {rowid} in global state DB")
+                })?;
             modified = true;
         }
     }
+
+    tx.commit()
+        .context("Failed to commit global state DB update")?;
 
     Ok(modified)
 }
@@ -356,6 +398,7 @@ impl StorageJson {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cursor::sqlite_value::Utf8SqlValue;
     use std::io::Write;
     use tempfile::NamedTempFile;
     use tempfile::TempDir;
@@ -690,5 +733,131 @@ mod tests {
             r#"{"active":"file:///home/user/project-copy","other":"file:///home/user/projects/foo","cache":"hash-new"}"#
         );
         assert!(!row_value.contains("project-copy-copy"));
+    }
+
+    #[test]
+    fn test_update_global_state_db_updates_utf8_blob_values_without_changing_type() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("state-blob.vscdb");
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE cursorDiskKV (key BLOB PRIMARY KEY, value BLOB)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES (?1, ?2)",
+            (
+                "workspace.key.file:///old/path",
+                Vec::from("meta:file:///old/path/hash-old".as_bytes()),
+            ),
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cursorDiskKV(key, value) VALUES (?1, ?2)",
+            (
+                Vec::from("composer:hash-old".as_bytes()),
+                Vec::from("file:///old/path".as_bytes()),
+            ),
+        )
+        .unwrap();
+        drop(conn);
+
+        let modified = update_global_state_db(
+            &db_path,
+            "/old/path",
+            "/new/path",
+            "file:///old/path",
+            "file:///new/path",
+            "hash-old",
+            "hash-new",
+            false,
+        )
+        .unwrap();
+
+        assert!(modified);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let item_value_type: String = conn
+            .query_row("SELECT typeof(value) FROM ItemTable", [], |row| row.get(0))
+            .unwrap();
+        let disk_key_type: String = conn
+            .query_row("SELECT typeof(key) FROM cursorDiskKV", [], |row| row.get(0))
+            .unwrap();
+        let disk_value_type: String = conn
+            .query_row("SELECT typeof(value) FROM cursorDiskKV", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let item_value = conn
+            .query_row("SELECT value FROM ItemTable", [], |row| {
+                Utf8SqlValue::from_row(row, 0)
+            })
+            .unwrap()
+            .unwrap();
+        let disk_key = conn
+            .query_row("SELECT key FROM cursorDiskKV", [], |row| {
+                Utf8SqlValue::from_row(row, 0)
+            })
+            .unwrap()
+            .unwrap();
+        let disk_value = conn
+            .query_row("SELECT value FROM cursorDiskKV", [], |row| {
+                Utf8SqlValue::from_row(row, 0)
+            })
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(item_value_type, "blob");
+        assert_eq!(disk_key_type, "blob");
+        assert_eq!(disk_value_type, "blob");
+        assert_eq!(item_value.as_str(), "meta:file:///new/path/hash-new");
+        assert_eq!(disk_key.as_str(), "composer:hash-new");
+        assert_eq!(disk_value.as_str(), "file:///new/path");
+    }
+
+    #[test]
+    fn test_update_global_state_db_skips_invalid_utf8_blob_values() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("state-invalid-blob.vscdb");
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES (?1, X'80')",
+            ["workspace.key.file:///other/path"],
+        )
+        .unwrap();
+        drop(conn);
+
+        let modified = update_global_state_db(
+            &db_path,
+            "/old/path",
+            "/new/path",
+            "file:///old/path",
+            "file:///new/path",
+            "hash-old",
+            "hash-new",
+            false,
+        )
+        .unwrap();
+
+        assert!(!modified);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let raw: Vec<u8> = conn
+            .query_row("SELECT value FROM ItemTable", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(raw, vec![0x80]);
     }
 }
