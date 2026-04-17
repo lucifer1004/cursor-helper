@@ -19,6 +19,7 @@ use url::Url;
 
 use super::utils;
 use crate::config;
+use crate::cursor::sqlite_value::query_optional_utf8_string_like_value;
 use crate::cursor::{folder_id, storage, workspace};
 
 /// Execute the rename command
@@ -483,15 +484,13 @@ fn update_composer_data(conn: &Connection, data: &str) -> Result<()> {
 }
 
 fn fetch_composer_data(conn: &Connection) -> Result<Option<String>> {
-    match conn.query_row(
-        "SELECT value FROM ItemTable WHERE key = 'composer.composerData'",
-        [],
-        |row| row.get::<_, String>(0),
-    ) {
-        Ok(value) => Ok(Some(value)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e).context("Failed to query composer.composerData"),
-    }
+    query_optional_utf8_string_like_value(
+        conn,
+        "SELECT value FROM ItemTable WHERE key = ?1",
+        "composer.composerData",
+        "value",
+    )
+    .context("Failed to query composer.composerData")
 }
 
 fn normalize_composer_data(
@@ -850,10 +849,12 @@ fn copy_or_move(src: &Path, dst: &Path, copy_mode: bool, dry_run: bool) -> Resul
     let options = CopyOptions::new().copy_inside(true).skip_exist(merge);
 
     let action = if copy_mode { "copy" } else { "move" };
-    let result = if copy_mode {
-        dir::copy(src, dst, &options).map(|_| ())
+    let result: Result<()> = if copy_mode {
+        dir::copy(src, dst, &options)
+            .map(|_| ())
+            .map_err(Into::into)
     } else {
-        dir::move_dir(src, dst, &options).map(|_| ())
+        move_or_merge_dir(src, dst, merge)
     };
 
     result.with_context(|| {
@@ -864,6 +865,360 @@ fn copy_or_move(src: &Path, dst: &Path, copy_mode: bool, dry_run: bool) -> Resul
             dst.display()
         )
     })
+}
+
+fn move_or_merge_dir(src: &Path, dst: &Path, merge: bool) -> Result<()> {
+    ensure_real_directory(src, "Source")?;
+
+    if merge {
+        ensure_real_directory(dst, "Target")?;
+        return move_dir_merge(src, dst);
+    }
+
+    match fs::rename(src, dst) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::CrossesDevices => {
+            move_dir_cross_device(src, dst)
+        }
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "Failed to atomically rename {} to {}",
+                src.display(),
+                dst.display()
+            )
+        }),
+    }
+}
+
+fn ensure_real_directory(path: &Path, label: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("Failed to access {label} directory: {}", path.display()))?;
+    let file_type = metadata.file_type();
+
+    if file_type.is_symlink() {
+        bail!("{label} must not be a symlink: {}", path.display())
+    }
+
+    if file_type.is_dir() {
+        return Ok(());
+    }
+
+    bail!("{label} is not a directory: {}", path.display())
+}
+
+fn move_dir_cross_device(src: &Path, dst: &Path) -> Result<()> {
+    move_dir_cross_device_with(src, dst, &mut |_, _| Ok(()))
+}
+
+fn move_dir_cross_device_with<F>(src: &Path, dst: &Path, before_copy: &mut F) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> Result<()>,
+{
+    move_dir_cross_device_with_hooks(src, dst, before_copy, &mut |_| Ok(()))
+}
+
+fn move_dir_cross_device_with_hooks<F, R>(
+    src: &Path,
+    dst: &Path,
+    before_copy: &mut F,
+    before_remove: &mut R,
+) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> Result<()>,
+    R: FnMut(&Path) -> Result<()>,
+{
+    let parent = dst
+        .parent()
+        .context("Destination path has no parent directory")?;
+    let staging_dir = tempfile::Builder::new()
+        .prefix(".cursor-helper-move-")
+        .tempdir_in(parent)
+        .with_context(|| {
+            format!(
+                "Failed to create staging directory under {}",
+                parent.display()
+            )
+        })?;
+    let staging_path = staging_dir.path().join("payload");
+
+    copy_path_no_follow_symlinks_with(src, &staging_path, before_copy)?;
+    if let Err(err) = remove_path_no_follow_symlinks_with(src, before_remove) {
+        restore_directory_from_staging(&staging_path, src).with_context(|| {
+            format!(
+                "Failed to restore source after removal error while moving {} to {}",
+                src.display(),
+                dst.display()
+            )
+        })?;
+        return Err(err).with_context(|| {
+            format!(
+                "Failed to remove original directory while moving {} to {}",
+                src.display(),
+                dst.display()
+            )
+        });
+    }
+
+    if let Err(err) = fs::rename(&staging_path, dst) {
+        restore_directory_from_staging(&staging_path, src).with_context(|| {
+            format!(
+                "Failed to restore source after finalize error while moving {} to {}",
+                src.display(),
+                dst.display()
+            )
+        })?;
+        return Err(err).with_context(|| {
+            format!(
+                "Failed to finalize staged move from {} to {}",
+                src.display(),
+                dst.display()
+            )
+        });
+    }
+
+    Ok(())
+}
+
+fn move_dir_merge(src: &Path, dst: &Path) -> Result<()> {
+    move_dir_merge_with(src, dst, &mut |_, _| Ok(()))
+}
+
+fn move_dir_merge_with<F>(src: &Path, dst: &Path, before_copy: &mut F) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> Result<()>,
+{
+    let mut moved_entries = Vec::new();
+    copy_dir_contents_no_follow_symlinks_with(src, dst, &mut moved_entries, before_copy)?;
+
+    moved_entries.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for moved_entry in moved_entries {
+        remove_path_no_follow_symlinks(&moved_entry)?;
+    }
+
+    prune_empty_dirs(src)
+}
+
+fn copy_dir_contents_no_follow_symlinks_with<F>(
+    src: &Path,
+    dst: &Path,
+    moved_entries: &mut Vec<PathBuf>,
+    before_copy: &mut F,
+) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> Result<()>,
+{
+    let entries = fs::read_dir(src)
+        .with_context(|| format!("Failed to read directory: {}", src.display()))?;
+
+    for entry in entries {
+        let entry = entry.with_context(|| format!("Failed to read entry in {}", src.display()))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let src_type = fs::symlink_metadata(&src_path)
+            .with_context(|| format!("Failed to inspect {}", src_path.display()))?
+            .file_type();
+
+        if path_exists_no_follow(&dst_path) {
+            let dst_type = fs::symlink_metadata(&dst_path)
+                .with_context(|| format!("Failed to inspect {}", dst_path.display()))?
+                .file_type();
+            if src_type.is_dir() && dst_type.is_dir() {
+                copy_dir_contents_no_follow_symlinks_with(
+                    &src_path,
+                    &dst_path,
+                    moved_entries,
+                    before_copy,
+                )?;
+            }
+            continue;
+        }
+
+        copy_path_no_follow_symlinks_with(&src_path, &dst_path, before_copy)?;
+        moved_entries.push(src_path);
+    }
+
+    Ok(())
+}
+
+fn copy_path_no_follow_symlinks_with<F>(src: &Path, dst: &Path, before_copy: &mut F) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> Result<()>,
+{
+    before_copy(src, dst)?;
+
+    let metadata = fs::symlink_metadata(src)
+        .with_context(|| format!("Failed to inspect {}", src.display()))?;
+    let file_type = metadata.file_type();
+
+    if file_type.is_dir() {
+        fs::create_dir(dst)
+            .with_context(|| format!("Failed to create directory: {}", dst.display()))?;
+
+        let entries = fs::read_dir(src)
+            .with_context(|| format!("Failed to read directory: {}", src.display()))?;
+        for entry in entries {
+            let entry =
+                entry.with_context(|| format!("Failed to read entry in {}", src.display()))?;
+            let child_src = entry.path();
+            let child_dst = dst.join(entry.file_name());
+            copy_path_no_follow_symlinks_with(&child_src, &child_dst, before_copy)?;
+        }
+
+        fs::set_permissions(dst, metadata.permissions())
+            .with_context(|| format!("Failed to set permissions on {}", dst.display()))?;
+        return Ok(());
+    }
+
+    if file_type.is_file() {
+        fs::copy(src, dst)
+            .with_context(|| format!("Failed to copy {} to {}", src.display(), dst.display()))?;
+        fs::set_permissions(dst, metadata.permissions())
+            .with_context(|| format!("Failed to set permissions on {}", dst.display()))?;
+        return Ok(());
+    }
+
+    if file_type.is_symlink() {
+        let target = fs::read_link(src)
+            .with_context(|| format!("Failed to read symlink target for {}", src.display()))?;
+        let is_dir = symlink_targets_directory(src, &file_type);
+        create_symlink_at(dst, &target, is_dir).with_context(|| {
+            format!(
+                "Failed to recreate symlink {} -> {}",
+                dst.display(),
+                target.display()
+            )
+        })?;
+        return Ok(());
+    }
+
+    bail!("Unsupported filesystem entry: {}", src.display())
+}
+
+fn remove_path_no_follow_symlinks(path: &Path) -> Result<()> {
+    remove_path_no_follow_symlinks_with(path, &mut |_| Ok(()))
+}
+
+fn remove_path_no_follow_symlinks_with<F>(path: &Path, before_remove: &mut F) -> Result<()>
+where
+    F: FnMut(&Path) -> Result<()>,
+{
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("Failed to inspect {}", path.display()))?;
+    let file_type = metadata.file_type();
+    before_remove(path)?;
+
+    if file_type.is_dir() {
+        let entries = fs::read_dir(path)
+            .with_context(|| format!("Failed to read directory: {}", path.display()))?;
+        for entry in entries {
+            let entry =
+                entry.with_context(|| format!("Failed to read entry in {}", path.display()))?;
+            remove_path_no_follow_symlinks_with(&entry.path(), before_remove)?;
+        }
+        fs::remove_dir(path)
+            .with_context(|| format!("Failed to remove directory: {}", path.display()))?;
+        return Ok(());
+    }
+
+    fs::remove_file(path).with_context(|| format!("Failed to remove file: {}", path.display()))?;
+    Ok(())
+}
+
+fn restore_directory_from_staging(staging_path: &Path, src: &Path) -> Result<()> {
+    let mut noop = |_: &Path, _: &Path| Ok(());
+
+    if path_exists_no_follow(src) {
+        ensure_real_directory(src, "Source")?;
+        let mut restored_entries = Vec::new();
+        copy_dir_contents_no_follow_symlinks_with(
+            staging_path,
+            src,
+            &mut restored_entries,
+            &mut noop,
+        )?;
+    } else {
+        copy_path_no_follow_symlinks_with(staging_path, src, &mut noop)?;
+    }
+
+    Ok(())
+}
+
+fn prune_empty_dirs(path: &Path) -> Result<()> {
+    if !path_exists_no_follow(path) {
+        return Ok(());
+    }
+
+    if !fs::symlink_metadata(path)
+        .with_context(|| format!("Failed to inspect {}", path.display()))?
+        .file_type()
+        .is_dir()
+    {
+        return Ok(());
+    }
+
+    let children: Vec<PathBuf> = fs::read_dir(path)
+        .with_context(|| format!("Failed to read directory: {}", path.display()))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::result::Result<_, _>>()
+        .with_context(|| format!("Failed to enumerate directory: {}", path.display()))?;
+
+    for child in &children {
+        if fs::symlink_metadata(child)
+            .with_context(|| format!("Failed to inspect {}", child.display()))?
+            .file_type()
+            .is_dir()
+        {
+            prune_empty_dirs(child)?;
+        }
+    }
+
+    if fs::read_dir(path)
+        .with_context(|| format!("Failed to read directory: {}", path.display()))?
+        .next()
+        .is_none()
+    {
+        fs::remove_dir(path)
+            .with_context(|| format!("Failed to remove directory: {}", path.display()))?;
+    }
+
+    Ok(())
+}
+
+fn path_exists_no_follow(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
+}
+
+#[cfg(windows)]
+fn symlink_targets_directory(src: &Path, file_type: &fs::FileType) -> bool {
+    use std::os::windows::fs::FileTypeExt;
+
+    if file_type.is_symlink_dir() {
+        return true;
+    }
+    if file_type.is_symlink_file() {
+        return false;
+    }
+
+    fs::metadata(src).map(|meta| meta.is_dir()).unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn symlink_targets_directory(src: &Path, _file_type: &fs::FileType) -> bool {
+    fs::metadata(src).map(|meta| meta.is_dir()).unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn create_symlink_at(path: &Path, target: &Path, _is_dir: bool) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, path)
+}
+
+#[cfg(windows)]
+fn create_symlink_at(path: &Path, target: &Path, is_dir: bool) -> std::io::Result<()> {
+    if is_dir {
+        std::os::windows::fs::symlink_dir(target, path)
+    } else {
+        std::os::windows::fs::symlink_file(target, path)
+    }
 }
 
 /// Convert a path to a file:// URI
@@ -891,6 +1246,9 @@ mod tests {
     use super::*;
     use rusqlite::Connection;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::{symlink, MetadataExt};
 
     #[test]
     fn test_clean_path_basic() {
@@ -937,6 +1295,195 @@ mod tests {
         let path = PathBuf::from("/home/user/my project");
         let uri = path_to_file_uri(&path).unwrap();
         assert_eq!(uri, "file:///home/user/my%20project");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_move_or_merge_dir_uses_atomic_rename_and_preserves_broken_symlink() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("project-old");
+        let dst = temp_dir.path().join("project-new");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("app.py"), "print('ok')\n").unwrap();
+        symlink(Path::new("/missing/python3.9"), src.join("python")).unwrap();
+
+        let src_inode = fs::metadata(&src).unwrap().ino();
+        move_or_merge_dir(&src, &dst, false).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(fs::metadata(&dst).unwrap().ino(), src_inode);
+        assert_eq!(
+            fs::read_to_string(dst.join("app.py")).unwrap(),
+            "print('ok')\n"
+        );
+        assert!(fs::symlink_metadata(dst.join("python"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            fs::read_link(dst.join("python")).unwrap(),
+            PathBuf::from("/missing/python3.9")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_move_or_merge_dir_rejects_source_symlink_root() {
+        let temp_dir = TempDir::new().unwrap();
+        let target = temp_dir.path().join("real-project");
+        let src = temp_dir.path().join("project-link");
+        let dst = temp_dir.path().join("project-new");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("app.py"), "print('ok')\n").unwrap();
+        symlink(&target, &src).unwrap();
+
+        let err = move_or_merge_dir(&src, &dst, false).unwrap_err();
+
+        assert!(err.to_string().contains("must not be a symlink"));
+        assert!(src.exists());
+        assert!(!dst.exists());
+        assert_eq!(
+            fs::read_to_string(target.join("app.py")).unwrap(),
+            "print('ok')\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_move_dir_cross_device_preserves_broken_symlink() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("project-old");
+        let dst = temp_dir.path().join("project-new");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("README.md"), "hello\n").unwrap();
+        symlink(Path::new("/missing/python3.9"), src.join("python")).unwrap();
+
+        move_dir_cross_device(&src, &dst).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(
+            fs::read_to_string(dst.join("README.md")).unwrap(),
+            "hello\n"
+        );
+        assert!(fs::symlink_metadata(dst.join("python"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            fs::read_link(dst.join("python")).unwrap(),
+            PathBuf::from("/missing/python3.9")
+        );
+    }
+
+    #[test]
+    fn test_move_dir_cross_device_failure_keeps_source_intact() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("project-old");
+        let dst = temp_dir.path().join("project-new");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("one.txt"), "one\n").unwrap();
+        fs::write(src.join("two.txt"), "two\n").unwrap();
+
+        let mut seen_files = 0usize;
+        let err = move_dir_cross_device_with(&src, &dst, &mut |candidate, _| {
+            if fs::symlink_metadata(candidate)
+                .unwrap()
+                .file_type()
+                .is_file()
+            {
+                seen_files += 1;
+                if seen_files == 2 {
+                    bail!("injected copy failure");
+                }
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(err.to_string().contains("injected copy failure"));
+        assert!(src.exists());
+        assert_eq!(fs::read_to_string(src.join("one.txt")).unwrap(), "one\n");
+        assert_eq!(fs::read_to_string(src.join("two.txt")).unwrap(), "two\n");
+        assert!(!dst.exists());
+    }
+
+    #[test]
+    fn test_move_dir_cross_device_remove_failure_restores_source() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("project-old");
+        let dst = temp_dir.path().join("project-new");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("one.txt"), "one\n").unwrap();
+        fs::write(src.join("two.txt"), "two\n").unwrap();
+
+        let mut removed_files = 0usize;
+        let err =
+            move_dir_cross_device_with_hooks(&src, &dst, &mut |_, _| Ok(()), &mut |candidate| {
+                if fs::symlink_metadata(candidate)
+                    .unwrap()
+                    .file_type()
+                    .is_file()
+                {
+                    removed_files += 1;
+                    if removed_files == 2 {
+                        bail!("injected remove failure");
+                    }
+                }
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert_eq!(removed_files, 2);
+        assert!(!err.to_string().is_empty());
+        assert!(src.exists());
+        assert_eq!(fs::read_to_string(src.join("one.txt")).unwrap(), "one\n");
+        assert_eq!(fs::read_to_string(src.join("two.txt")).unwrap(), "two\n");
+        assert!(!dst.exists());
+    }
+
+    #[test]
+    fn test_move_dir_merge_skips_conflicts_and_removes_copied_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("project-old");
+        let dst = temp_dir.path().join("project-new");
+        fs::create_dir_all(src.join("subdir")).unwrap();
+        fs::create_dir_all(&dst).unwrap();
+        fs::write(src.join("conflict.txt"), "from source\n").unwrap();
+        fs::write(src.join("subdir").join("moved.txt"), "moved\n").unwrap();
+        fs::write(dst.join("conflict.txt"), "from destination\n").unwrap();
+
+        move_dir_merge(&src, &dst).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dst.join("conflict.txt")).unwrap(),
+            "from destination\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dst.join("subdir").join("moved.txt")).unwrap(),
+            "moved\n"
+        );
+        assert!(src.join("conflict.txt").exists());
+        assert!(!src.join("subdir").exists());
+        assert!(src.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_move_dir_merge_rejects_target_symlink_root() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("project-old");
+        let dst_target = temp_dir.path().join("real-target");
+        let dst = temp_dir.path().join("project-link");
+        fs::create_dir(&src).unwrap();
+        fs::create_dir(&dst_target).unwrap();
+        fs::write(src.join("moved.txt"), "moved\n").unwrap();
+        symlink(&dst_target, &dst).unwrap();
+
+        let err = move_or_merge_dir(&src, &dst, true).unwrap_err();
+
+        assert!(err.to_string().contains("must not be a symlink"));
+        assert!(src.join("moved.txt").exists());
+        assert!(fs::read_dir(&dst_target).unwrap().next().is_none());
     }
 
     #[cfg(windows)]

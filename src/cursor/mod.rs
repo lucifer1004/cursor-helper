@@ -2,6 +2,7 @@
 
 pub mod chat_sessions;
 pub mod folder_id;
+pub mod sqlite_value;
 pub mod storage;
 pub mod workspace;
 

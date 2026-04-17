@@ -123,24 +123,16 @@ fn list(workspace_storage_dir: PathBuf) -> Result<(Vec<Project>, ListWarnings)> 
             continue;
         }
 
-        let content = fs::read_to_string(&workspace_json_path)
-            .with_context(|| format!("Failed to read: {}", workspace_json_path.display()))?;
-
-        // Parse workspace.json
-        let workspace: serde_json::Value = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse: {}", workspace_json_path.display()))?;
-
         // workspace.json can have either:
         // - "folder": single-folder project
         // - "workspace": multi-root .code-workspace file
-        let folder_url = match workspace.get("folder").and_then(|v| v.as_str()) {
-            Some(url) => url,
-            None => {
-                // Multi-root workspace - skip for now (would need to parse .code-workspace)
-                // Could also use workspace.get("workspace") to show the workspace file
-                continue;
-            }
+        let target_uri = match crate::cursor::workspace::read_workspace_target_uri(&project_dir)
+            .with_context(|| format!("Failed to load: {}", workspace_json_path.display()))?
+        {
+            Some(uri) => uri,
+            None => continue,
         };
+        let folder_url = target_uri.as_str();
 
         // Parse folder URL
         let parsed = match parse_folder_url(folder_url) {
@@ -395,6 +387,7 @@ fn parse_folder_url(url_str: &str) -> Option<ParsedUrl> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[cfg(not(windows))]
     #[test]
@@ -425,6 +418,17 @@ mod tests {
     fn test_parse_local_url_with_spaces_windows() {
         let parsed = parse_folder_url("file:///C:/Users/me/my%20project").unwrap();
         assert_eq!(parsed.path, PathBuf::from("C:\\Users\\me\\my project"));
+        assert!(parsed.remote.is_none());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_parse_local_workspace_file_url() {
+        let parsed = parse_folder_url("file:///Users/me/projects/dev.code-workspace").unwrap();
+        assert_eq!(
+            parsed.path,
+            PathBuf::from("/Users/me/projects/dev.code-workspace")
+        );
         assert!(parsed.remote.is_none());
     }
 
@@ -582,5 +586,32 @@ mod tests {
 
         assert_eq!(projects[0].folder_id, "b");
         assert_eq!(projects[1].folder_id, "a");
+    }
+
+    #[test]
+    fn test_list_includes_multi_root_workspace_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_storage = temp_dir.path().join("workspaceStorage");
+        let workspace_dir = workspace_storage.join("abc123");
+        let workspace_file = temp_dir.path().join("dev.code-workspace");
+
+        fs::create_dir_all(&workspace_dir).unwrap();
+        fs::write(&workspace_file, "{}\n").unwrap();
+        fs::write(
+            workspace_dir.join("workspace.json"),
+            format!(
+                r#"{{"workspace":"{}"}}"#,
+                url::Url::from_file_path(&workspace_file).unwrap()
+            ),
+        )
+        .unwrap();
+
+        let (projects, warnings) = list(workspace_storage).unwrap();
+
+        assert!(warnings.entries.is_empty());
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].folder_id, "abc123");
+        assert_eq!(projects[0].path, workspace_file);
+        assert!(projects[0].remote.is_none());
     }
 }

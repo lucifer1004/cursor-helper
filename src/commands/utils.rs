@@ -2,8 +2,11 @@
 
 use anyhow::{Context, Result};
 use fs_extra::dir::{self, CopyOptions};
+use percent_encoding::percent_decode_str;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::cursor::workspace;
 
 /// Format bytes as human-readable size
 pub fn format_size(bytes: u64) -> String {
@@ -102,17 +105,9 @@ pub fn find_workspace_dir(project_path: &Path) -> Result<Option<std::path::PathB
                 continue;
             }
 
-            let workspace_json = entry.path().join("workspace.json");
-            if !workspace_json.exists() {
-                continue;
-            }
-
-            let content = fs::read_to_string(&workspace_json)?;
-            let ws: serde_json::Value = serde_json::from_str(&content)?;
-
-            if let Some(folder) = ws.get("folder").and_then(|v| v.as_str()) {
-                let folder_normalized = normalize_uri_for_comparison(folder);
-                if folder_normalized == project_uri_normalized {
+            if let Some(target_uri) = workspace::read_workspace_target_uri(&entry.path())? {
+                let target_normalized = normalize_uri_for_comparison(&target_uri);
+                if target_normalized == project_uri_normalized {
                     return Ok(Some(entry.path()));
                 }
             }
@@ -129,17 +124,9 @@ pub fn find_workspace_dir(project_path: &Path) -> Result<Option<std::path::PathB
             continue;
         }
 
-        let workspace_json = entry.path().join("workspace.json");
-        if !workspace_json.exists() {
-            continue;
-        }
-
-        let content = fs::read_to_string(&workspace_json)?;
-        let ws: serde_json::Value = serde_json::from_str(&content)?;
-
-        if let Some(folder) = ws.get("folder").and_then(|v| v.as_str()) {
+        if let Some(target_uri) = workspace::read_workspace_target_uri(&entry.path())? {
             // Check if this is a remote URL and extract the path
-            if let Ok(url) = url::Url::parse(folder) {
+            if let Ok(url) = url::Url::parse(&target_uri) {
                 if url.scheme() == "vscode-remote" {
                     // Extract path from remote URL and compare
                     let remote_path = url.path().trim_end_matches('/');
@@ -172,12 +159,60 @@ pub fn find_workspace_dir(project_path: &Path) -> Result<Option<std::path::PathB
 ///
 /// This normalization is safe to apply on all platforms.
 fn normalize_uri_for_comparison(uri: &str) -> String {
-    uri.trim_end_matches('/').to_lowercase().replace("%3a", ":")
+    let trimmed = uri.trim_end_matches('/');
+    let Some((scheme, authority, path)) = split_uri(trimmed) else {
+        return normalize_workspace_path(trimmed);
+    };
+
+    let path = normalize_workspace_path(&path);
+
+    if authority.is_empty() {
+        format!("{}://{}", scheme.to_ascii_lowercase(), path)
+    } else {
+        format!("{}://{}{}", scheme.to_ascii_lowercase(), authority, path)
+    }
+}
+
+fn normalize_workspace_path(path: &str) -> String {
+    let trimmed = path
+        .trim_end_matches('/')
+        .replace("%3A", ":")
+        .replace("%3a", ":");
+    let decoded = percent_decode_str(&trimmed).decode_utf8_lossy();
+    normalize_drive_letter(&decoded)
+}
+
+fn split_uri(uri: &str) -> Option<(&str, String, String)> {
+    let (scheme, rest) = uri.split_once("://")?;
+    let (authority, path) = match rest.find('/') {
+        Some(index) => (&rest[..index], &rest[index..]),
+        None => (rest, ""),
+    };
+
+    Some((scheme, authority.to_string(), path.to_string()))
+}
+
+fn normalize_drive_letter(path: &str) -> String {
+    let mut chars: Vec<char> = path.chars().collect();
+
+    let drive_index = match chars.as_slice() {
+        ['/', drive, ':', '/', ..] if drive.is_ascii_alphabetic() => Some(1),
+        [drive, ':', '/', ..] if drive.is_ascii_alphabetic() => Some(0),
+        _ => None,
+    };
+
+    if let Some(index) = drive_index {
+        chars[index] = chars[index].to_ascii_lowercase();
+        chars.into_iter().collect()
+    } else {
+        path.to_string()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_format_size() {
@@ -235,9 +270,21 @@ mod tests {
 
     #[test]
     fn test_normalize_uri_unix_paths() {
-        // Unix paths should also work (lowercasing is harmless)
+        // Unix paths should preserve case
         let result = normalize_uri_for_comparison("file:///Users/me/project/");
-        assert_eq!(result, "file:///users/me/project");
+        assert_eq!(result, "file:///Users/me/project");
+    }
+
+    #[test]
+    fn test_normalize_uri_preserves_case_for_posix_paths() {
+        assert_eq!(
+            normalize_uri_for_comparison("file:///tmp/Project"),
+            "file:///tmp/Project"
+        );
+        assert_ne!(
+            normalize_uri_for_comparison("file:///tmp/Project"),
+            normalize_uri_for_comparison("file:///tmp/project")
+        );
     }
 
     #[test]
@@ -246,5 +293,40 @@ mod tests {
         let result = find_workspace_dir(Path::new("/nonexistent/path/that/does/not/exist"));
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_find_workspace_dir_matches_multi_root_workspace_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let original = std::env::var_os("XDG_CONFIG_HOME");
+        let workspace_storage = temp_dir
+            .path()
+            .join("Cursor")
+            .join("User")
+            .join("workspaceStorage");
+        let workspace_dir = workspace_storage.join("abc123");
+        let workspace_file = temp_dir.path().join("project.code-workspace");
+
+        fs::create_dir_all(&workspace_dir).unwrap();
+        fs::write(&workspace_file, "{}\n").unwrap();
+        fs::write(
+            workspace_dir.join("workspace.json"),
+            format!(
+                r#"{{"workspace":"{}"}}"#,
+                url::Url::from_file_path(&workspace_file).unwrap()
+            ),
+        )
+        .unwrap();
+
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        let result = find_workspace_dir(&workspace_file);
+
+        if let Some(value) = original {
+            std::env::set_var("XDG_CONFIG_HOME", value);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        assert_eq!(result.unwrap(), Some(workspace_dir));
     }
 }

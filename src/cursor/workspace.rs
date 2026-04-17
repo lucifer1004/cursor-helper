@@ -7,6 +7,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
 use url::Url;
@@ -134,9 +135,33 @@ impl WorkspaceJson {
     }
 }
 
+/// Read the primary workspace target URI from a workspace storage directory.
+///
+/// Cursor stores either:
+/// - `folder`: single-folder workspace
+/// - `workspace`: multi-root `.code-workspace` file
+pub fn read_workspace_target_uri(workspace_dir: &Path) -> Result<Option<String>> {
+    let workspace_json = workspace_dir.join("workspace.json");
+    if !workspace_json.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(&workspace_json)
+        .with_context(|| format!("Failed to read: {}", workspace_json.display()))?;
+    let ws: Value = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse: {}", workspace_json.display()))?;
+
+    Ok(ws
+        .get("folder")
+        .and_then(|value| value.as_str())
+        .or_else(|| ws.get("workspace").and_then(|value| value.as_str()))
+        .map(|value| value.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[cfg(not(windows))]
     #[test]
@@ -189,6 +214,41 @@ mod tests {
         assert_eq!(
             normalize_path_for_hash(Path::new("/Users/me/project")),
             "/Users/me/project"
+        );
+    }
+
+    #[test]
+    fn test_read_workspace_target_uri_prefers_folder_then_workspace() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_dir = temp_dir.path().join("ws");
+        fs::create_dir(&workspace_dir).unwrap();
+
+        fs::write(
+            workspace_dir.join("workspace.json"),
+            r#"{"folder":"file:///tmp/project","workspace":"file:///tmp/project.code-workspace"}"#,
+        )
+        .unwrap();
+
+        let target = read_workspace_target_uri(&workspace_dir).unwrap();
+        assert_eq!(target.as_deref(), Some("file:///tmp/project"));
+    }
+
+    #[test]
+    fn test_read_workspace_target_uri_reads_multi_root_workspace() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_dir = temp_dir.path().join("ws");
+        fs::create_dir(&workspace_dir).unwrap();
+
+        fs::write(
+            workspace_dir.join("workspace.json"),
+            r#"{"workspace":"file:///tmp/project.code-workspace"}"#,
+        )
+        .unwrap();
+
+        let target = read_workspace_target_uri(&workspace_dir).unwrap();
+        assert_eq!(
+            target.as_deref(),
+            Some("file:///tmp/project.code-workspace")
         );
     }
 }
