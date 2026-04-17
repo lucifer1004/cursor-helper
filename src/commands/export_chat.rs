@@ -273,17 +273,8 @@ pub fn execute_by_id(
 
     // Try to read the project path from workspace.json
     let project_path = {
-        let workspace_json = workspace_dir.join("workspace.json");
-        if workspace_json.exists() {
-            let content = fs::read_to_string(&workspace_json)?;
-            let ws: serde_json::Value = serde_json::from_str(&content)?;
-            ws.get("folder")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("workspace:{}", workspace_id))
-        } else {
-            format!("workspace:{}", workspace_id)
-        }
+        crate::cursor::workspace::read_workspace_target_uri(&workspace_dir)?
+            .unwrap_or_else(|| format!("workspace:{}", workspace_id))
     };
 
     // Extract chat sessions
@@ -773,6 +764,7 @@ fn format_timestamp(ts: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_export_format() {
@@ -938,5 +930,108 @@ mod tests {
         assert!(result.contains("[completed]"));
         assert!(result.contains("Parameters"));
         assert!(result.contains("Result"));
+    }
+
+    #[test]
+    fn test_execute_by_id_uses_multi_root_workspace_label() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_storage = temp_dir
+            .path()
+            .join("Cursor")
+            .join("User")
+            .join("workspaceStorage");
+        let workspace_dir = workspace_storage.join("abc123");
+        let workspace_file = temp_dir.path().join("dev.code-workspace");
+
+        fs::create_dir_all(&workspace_dir).unwrap();
+        fs::write(&workspace_file, "{}\n").unwrap();
+        fs::write(
+            workspace_dir.join("workspace.json"),
+            format!(
+                r#"{{"workspace":"{}"}}"#,
+                url::Url::from_file_path(&workspace_file).unwrap()
+            ),
+        )
+        .unwrap();
+
+        let export_project_path =
+            crate::cursor::workspace::read_workspace_target_uri(&workspace_dir)
+                .unwrap()
+                .unwrap_or_else(|| "workspace:abc123".to_string());
+
+        assert_eq!(
+            export_project_path,
+            url::Url::from_file_path(&workspace_file)
+                .unwrap()
+                .to_string()
+        );
+    }
+
+    #[test]
+    fn test_execute_by_id_exports_multi_root_workspace_label() {
+        let temp_dir = TempDir::new().unwrap();
+        let original = std::env::var_os("XDG_CONFIG_HOME");
+        let workspace_storage = temp_dir
+            .path()
+            .join("Cursor")
+            .join("User")
+            .join("workspaceStorage");
+        let workspace_dir = workspace_storage.join("abc123");
+        let workspace_file = temp_dir.path().join("dev.code-workspace");
+        let output = temp_dir.path().join("export.json");
+
+        fs::create_dir_all(&workspace_dir).unwrap();
+        fs::write(&workspace_file, "{}\n").unwrap();
+        fs::write(
+            workspace_dir.join("workspace.json"),
+            format!(
+                r#"{{"workspace":"{}"}}"#,
+                url::Url::from_file_path(&workspace_file).unwrap()
+            ),
+        )
+        .unwrap();
+
+        let conn = Connection::open(workspace_dir.join("state.vscdb")).unwrap();
+        conn.execute(
+            "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable (key, value) VALUES (?1, ?2)",
+            rusqlite::params![
+                "composer.composerData",
+                r#"{"allComposers":[{"composerId":"session-a","name":"Test","createdAt":1000,"lastUpdatedAt":2000,"isArchived":false}]}"#
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        let result = execute_by_id(
+            "abc123",
+            ExportFormat::Json,
+            Some(output.to_str().unwrap()),
+            &ExportOptions::default(),
+            false,
+        );
+
+        if let Some(value) = original {
+            std::env::set_var("XDG_CONFIG_HOME", value);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        result.unwrap();
+        let export: ChatExport =
+            serde_json::from_str(&fs::read_to_string(output).unwrap()).unwrap();
+        assert_eq!(
+            export.project_path,
+            url::Url::from_file_path(&workspace_file)
+                .unwrap()
+                .to_string()
+        );
+        assert_eq!(export.sessions.len(), 1);
+        assert_eq!(export.sessions[0].id, "session-a");
     }
 }

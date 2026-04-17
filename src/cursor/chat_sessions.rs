@@ -5,10 +5,10 @@ use percent_encoding::percent_decode_str;
 use rusqlite::Connection;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::cursor::sqlite_value::query_optional_utf8_string_like_value;
+use crate::cursor::workspace;
 
 const GLOBAL_HEADERS_KEY: &str = "composer.composerHeaders";
 const LOCAL_COMPOSER_DATA_KEY: &str = "composer.composerData";
@@ -45,16 +45,9 @@ impl WorkspaceIdentity {
             };
         }
 
-        let folder_uri = fs::read_to_string(&workspace_json_path)
+        let folder_uri = workspace::read_workspace_target_uri(workspace_dir)
             .ok()
-            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
-            .and_then(|workspace| {
-                workspace
-                    .get("folder")
-                    .and_then(|value| value.as_str())
-                    .or_else(|| workspace.get("workspace").and_then(|value| value.as_str()))
-                    .map(|value| value.to_string())
-            });
+            .flatten();
 
         let folder_uri_normalized = folder_uri.as_deref().map(normalize_uri_for_comparison);
         let workspace_path_normalized = folder_uri.as_deref().and_then(extract_workspace_path);
