@@ -1,0 +1,140 @@
+#:schema ../../../schema/clause.schema.json
+
+[govctl]
+id = "C-COMMANDS"
+title = "Command Reference"
+kind = "normative"
+status = "active"
+since = "0.1.0"
+
+[content]
+text = """
+This RFC defines the command-line interface for cursor-helper.
+
+## Foundation Commands
+
+### `cursor-helper list`
+
+List all Cursor projects.
+
+```
+cursor-helper list [--with-hash] [--with-chat-count]
+```
+
+**Flags:**
+- `--with-hash`: Show workspace hash for each project
+- `--with-chat-count`: Show number of chat sessions
+
+**Output:** Table with columns: Path, Last Opened, Chat Count (optional), Hash (optional)
+
+---
+
+### `cursor-helper stats`
+
+Show usage statistics for a project.
+
+```
+cursor-helper stats [<project-path>]
+```
+
+If `<project-path>` is omitted, prompt to select from known projects.
+
+**Metrics:**
+- Chat session count
+- Tokens used (if available)
+- Files changed
+- Time spent (if available)
+
+---
+
+## Data Management Commands
+
+### `cursor-helper export-chat`
+
+Export chat history to a readable format.
+
+```
+cursor-helper export-chat <project-path> [--format=md|json]
+```
+
+**Format:**
+- `md`: Markdown with conversation structure
+- `json`: Full fidelity with metadata
+
+---
+
+### `cursor-helper clean`
+
+Remove orphaned workspace storage.
+
+```
+cursor-helper clean [--dry-run]
+```
+
+Orphaned = workspace storage exists but project folder does not.
+
+**Behavior:**
+- `--dry-run` (default): Show what would be deleted, ask confirmation
+- Without `--dry-run`: Require explicit `--yes` flag
+
+---
+
+## Backup and Restore Commands
+
+### `cursor-helper backup`
+
+Backup all Cursor metadata for a project.
+
+```
+cursor-helper backup <project-path> <backup-file>
+```
+
+Creates a gzipped tar archive containing:
+- `workspaceStorage/` contents
+- `projects/` entry if exists
+
+---
+
+### `cursor-helper restore`
+
+Restore a project from backup.
+
+```
+cursor-helper restore <backup-file> <new-path>
+```
+
+Restores to new location, preserving all chat history.
+
+---
+
+## Advanced Commands
+
+### `cursor-helper clone`
+
+Clone a project with full chat history to a new location.
+
+```
+cursor-helper clone <old-path> <new-path>
+```
+
+Unlike `rename`:
+- Creates new UUIDs for all references
+- Original project remains intact
+- Both projects have independent chat history
+
+---
+
+### `cursor-helper rename`
+
+Rename a project (already implemented).
+
+```
+cursor-helper rename <old-path> <new-path>
+```
+
+Updates all Cursor metadata to reflect the new path.
+
+**Behavior:**
+- Updates workspace hash
+- Updates folder ID slug
+- Migrates workspace storage directory"""

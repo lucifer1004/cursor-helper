@@ -1,0 +1,56 @@
+#:schema ../../../schema/clause.schema.json
+
+[govctl]
+id = "C-PRIORITY"
+title = "Implementation Priority"
+kind = "normative"
+status = "active"
+since = "0.1.0"
+
+[content]
+text = """
+Commands MUST be implemented in the following priority order:
+
+## Phase 1: Foundation (Low Risk, High Utility)
+
+1. **`list`** — Discover projects, validate data model
+2. **`stats`** — Expose usage data, validate extraction approach
+
+**Rationale:** These commands read-only data. No risk of data loss. Establish understanding of Cursor's data structures early.
+
+---
+
+## Phase 2: Data Management
+
+3. **`export-chat`** — Validate chat format parsing
+4. **`clean`** — Requires `list` to show affected projects
+
+**Rationale:** `export-chat` confirms we understand the chat session format. `clean` is the first write operation, needs careful handling.
+
+---
+
+## Phase 3: Backup/Restore
+
+5. **`backup`** — Archive existing state
+6. **`restore`** — Recover from backup
+
+**Rationale:** These provide safety net for higher-risk operations. Must be stable before `clone`.
+
+---
+
+## Phase 4: Advanced
+
+7. **`clone`** — Complex UUID remapping
+8. **`rename`** — Already implemented, will be integrated
+
+**Rationale:** `clone` has highest risk of data corruption. Only implement after all other commands are stable.
+
+---
+
+## Out-of-Scope Commands
+
+The following are explicitly NOT in scope for this RFC:
+
+- `cursor-helper merge` — Merge chat histories from multiple sessions
+- `cursor-helper import` — Import chats from other IDEs or formats
+- `cursor-helper sync` — Sync project state across machines"""

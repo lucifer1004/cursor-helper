@@ -1,0 +1,39 @@
+#:schema ../../../schema/clause.schema.json
+
+[govctl]
+id = "C-PRINCIPLES"
+title = "Design Principles"
+kind = "normative"
+status = "active"
+since = "0.1.0"
+
+[content]
+text = """
+## Data Structure First
+
+Understand Cursor's data model before writing code:
+
+- **Folder ID**: Path slug (`/Users/foo/bar` → `Users-foo-bar`)
+- **Workspace Hash**: `MD5(absolutePath + Math.round(birthtimeMs))`
+- **Storage locations**: `~/.cursor/projects/`, `~/Library/Application Support/Cursor/User/workspaceStorage/`, `globalStorage/`
+
+## Path Handling
+
+Paths MUST be handled exactly as Cursor records them:
+
+- Do NOT resolve symlinks (Cursor stores literal paths)
+- Clean `.` and `..` components without filesystem resolution
+- Preserve the path string Cursor originally used
+
+## Fail-Safe Operations
+
+1. **Validate before mutate** — Check all preconditions before modifying anything
+2. **Atomic where possible** — Use rename operations, not copy-then-delete
+3. **Backup on conflict** — If target exists, require explicit confirmation or backup
+4. **Reversible** — Operations SHOULD be reversible or provide undo information
+
+## Minimal Dependencies
+
+- Prefer stdlib over external crates
+- Each dependency is a liability for cross-platform builds
+- Heavy dependencies (async runtimes, web frameworks) are forbidden"""

@@ -1,0 +1,24 @@
+#:schema ../../../schema/clause.schema.json
+
+[govctl]
+id = "C-SCOPE"
+title = "Scope and Goals"
+kind = "normative"
+status = "active"
+since = "0.1.0"
+
+[content]
+text = """
+The project MUST:
+
+1. **Preserve user data** — Never lose chat history, workspace state, or project associations
+2. **Support project rename/move** — Migrate all Cursor metadata when project paths change
+3. **Be cross-platform** — Work on macOS, Linux, and Windows
+4. **Handle edge cases** — Symlinks, special characters, non-ASCII paths, relative paths
+5. **Provide clear feedback** — Show what will change before making changes
+
+The project SHOULD:
+
+1. **Support backup/restore** — Export and import Cursor project state
+2. **Support cleanup** — Remove orphaned metadata for deleted projects
+3. **Provide inspection tools** — Query Cursor's internal state for debugging"""

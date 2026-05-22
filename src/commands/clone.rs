@@ -5,7 +5,7 @@
 //! - Original project remains intact
 //! - Both projects have independent chat history
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use owo_colors::OwoColorize;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -174,13 +174,13 @@ fn remap_chat_uuids(db_path: &PathBuf) -> Result<usize> {
     let mut uuid_map: HashMap<String, String> = HashMap::new();
 
     for key in &keys {
-        if let Some(rest) = key.strip_prefix("workbench.panel.aichat.") {
-            if let Some(old_uuid) = rest.split('.').next() {
-                if !old_uuid.is_empty() && !uuid_map.contains_key(old_uuid) {
-                    let new_uuid = Uuid::new_v4().to_string();
-                    uuid_map.insert(old_uuid.to_string(), new_uuid);
-                }
-            }
+        if let Some(rest) = key.strip_prefix("workbench.panel.aichat.")
+            && let Some(old_uuid) = rest.split('.').next()
+            && !old_uuid.is_empty()
+            && !uuid_map.contains_key(old_uuid)
+        {
+            let new_uuid = Uuid::new_v4().to_string();
+            uuid_map.insert(old_uuid.to_string(), new_uuid);
         }
     }
 

@@ -1,0 +1,28 @@
+#:schema ../../schema/rfc.schema.json
+
+[govctl]
+id = "RFC-0001"
+title = "Feature commands for cursor-helper"
+version = "1.0.0"
+status = "normative"
+phase = "stable"
+owners = ["@Gabriel Wu"]
+created = "2026-01-19"
+updated = "2026-01-19"
+
+[[sections]]
+title = "Summary"
+
+[[sections]]
+title = "Specification"
+clauses = [
+    "clauses/C-COMMANDS.toml",
+    "clauses/C-PRIORITY.toml",
+    "clauses/C-SAFETY.toml",
+    "clauses/C-OMITTED.toml",
+]
+
+[[changelog]]
+version = "0.1.0"
+date = "2026-01-19"
+notes = "Initial draft"

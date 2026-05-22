@@ -1,6 +1,6 @@
 //! Restore command - Restore Cursor metadata from a backup
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use flate2::read::GzDecoder;
 use owo_colors::OwoColorize;
 use std::fs::{self, File};
@@ -23,10 +23,10 @@ pub fn execute(backup_file: &str, new_path: &str) -> Result<()> {
     }
 
     // New path's parent must exist
-    if let Some(parent) = new_path.parent() {
-        if !parent.exists() {
-            bail!("Parent directory does not exist: {}", parent.display());
-        }
+    if let Some(parent) = new_path.parent()
+        && !parent.exists()
+    {
+        bail!("Parent directory does not exist: {}", parent.display());
     }
 
     // Read and parse manifest from archive

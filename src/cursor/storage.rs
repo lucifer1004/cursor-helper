@@ -3,7 +3,7 @@
 //! Handles updates to ~/Library/Application Support/Cursor/User/globalStorage/storage.json
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;

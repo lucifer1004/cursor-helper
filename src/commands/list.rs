@@ -1,7 +1,7 @@
 //! List command - Show all Cursor projects
 
 use anyhow::{Context, Result};
-use comfy_table::{presets::UTF8_FULL_CONDENSED, Cell, ContentArrangement, Table};
+use comfy_table::{Cell, ContentArrangement, Table, presets::UTF8_FULL_CONDENSED};
 use percent_encoding::percent_decode_str;
 use std::fs;
 use std::path::PathBuf;

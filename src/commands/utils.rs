@@ -132,22 +132,21 @@ fn find_workspace_dir_in(
 
         if let Some(target_uri) = workspace::read_workspace_target_uri(&entry.path())? {
             // Check if this is a remote URL and extract the path
-            if let Ok(url) = url::Url::parse(&target_uri) {
-                if url.scheme() == "vscode-remote" {
-                    // Extract path from remote URL and compare
-                    let remote_path = url.path().trim_end_matches('/');
-                    if remote_path == search_path_normalized {
-                        return Ok(Some(entry.path()));
-                    }
-                    // Also try matching just the final component (project name)
-                    if let Some(remote_name) = remote_path.rsplit('/').next() {
-                        if let Some(search_name) = search_path_normalized.rsplit(['/', '\\']).next()
-                        {
-                            if remote_name == search_name && !remote_name.is_empty() {
-                                return Ok(Some(entry.path()));
-                            }
-                        }
-                    }
+            if let Ok(url) = url::Url::parse(&target_uri)
+                && url.scheme() == "vscode-remote"
+            {
+                // Extract path from remote URL and compare
+                let remote_path = url.path().trim_end_matches('/');
+                if remote_path == search_path_normalized {
+                    return Ok(Some(entry.path()));
+                }
+                // Also try matching just the final component (project name)
+                if let Some(remote_name) = remote_path.rsplit('/').next()
+                    && let Some(search_name) = search_path_normalized.rsplit(['/', '\\']).next()
+                    && remote_name == search_name
+                    && !remote_name.is_empty()
+                {
+                    return Ok(Some(entry.path()));
                 }
             }
         }

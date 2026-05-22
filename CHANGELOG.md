@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-23
+
+### Changed
+
+- Project MSRV is declared in Cargo.toml and documented in README as Rust 1.88 (WI-2026-05-23-001)
+
+### Fixed
+
+- Cross-device rename staging copy uses parcopy while preserving source-intact failure behavior (WI-2026-05-23-001)
+- Production code has no unwrap, expect, panic, or unreachable paths under release clippy gate (WI-2026-05-23-001)
+
 ## [0.2.2] - 2026-03-01
 
 ### Added

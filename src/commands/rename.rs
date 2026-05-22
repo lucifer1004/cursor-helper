@@ -6,10 +6,10 @@
 //! - MCP cache
 //! - Terminal info
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use fs_extra::dir::{self, CopyOptions as FsCopyOptions};
 use owo_colors::OwoColorize;
-use parcopy::{copy_dir as parcopy_copy_dir, CopyOptions as ParcopyCopyOptions, OnConflict};
+use parcopy::{CopyOptions as ParcopyCopyOptions, OnConflict, copy_dir as parcopy_copy_dir};
 use rusqlite::Connection;
 use std::fs;
 use std::io::{self, Write};
@@ -1280,7 +1280,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[cfg(unix)]
-    use std::os::unix::fs::{symlink, MetadataExt};
+    use std::os::unix::fs::{MetadataExt, symlink};
 
     #[test]
     fn test_clean_path_basic() {
@@ -1362,10 +1362,12 @@ mod tests {
             fs::read_to_string(dst.join("app.py")).unwrap(),
             "print('ok')\n"
         );
-        assert!(fs::symlink_metadata(dst.join("python"))
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            fs::symlink_metadata(dst.join("python"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         assert_eq!(
             fs::read_link(dst.join("python")).unwrap(),
             PathBuf::from("/missing/python3.9")
@@ -1411,10 +1413,12 @@ mod tests {
             fs::read_to_string(dst.join("README.md")).unwrap(),
             "hello\n"
         );
-        assert!(fs::symlink_metadata(dst.join("python"))
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            fs::symlink_metadata(dst.join("python"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         assert_eq!(
             fs::read_link(dst.join("python")).unwrap(),
             PathBuf::from("/missing/python3.9")

@@ -17,7 +17,7 @@
 //!
 //! This tool is not affiliated with or endorsed by Anysphere, Inc. (Cursor).
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -441,130 +441,125 @@ fn fetch_session_messages(
         .ok()
         .flatten();
 
-        if let Some(json_str) = bubble_str {
-            if let Ok(bubble) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                // Parse timestamp from ISO string
-                let timestamp = bubble
-                    .get("createdAt")
+        if let Some(json_str) = bubble_str
+            && let Ok(bubble) = serde_json::from_str::<serde_json::Value>(&json_str)
+        {
+            // Parse timestamp from ISO string
+            let timestamp = bubble
+                .get("createdAt")
+                .and_then(|v| v.as_str())
+                .and_then(parse_iso_timestamp);
+
+            // Check for thinking block (capabilityType=30 with thinking field)
+            if options.with_thinking
+                && let Some(thinking) = bubble.get("thinking").and_then(|t| t.as_object())
+                && let Some(thinking_text) = thinking.get("text").and_then(|v| v.as_str())
+                && !thinking_text.is_empty()
+            {
+                let thinking_duration = bubble.get("thinkingDurationMs").and_then(|v| v.as_i64());
+
+                messages.push(ChatMessage {
+                    role: "thinking".to_string(),
+                    content: thinking_text.to_string(),
+                    timestamp,
+                    thinking_duration_ms: thinking_duration,
+                    tool_call: None,
+                    model: None,
+                    tokens: None,
+                });
+            }
+
+            // Check for tool call (capabilityType=15 with toolFormerData)
+            if options.with_tools
+                && let Some(tool_data) = bubble.get("toolFormerData").and_then(|t| t.as_object())
+            {
+                let tool_name = tool_data
+                    .get("name")
                     .and_then(|v| v.as_str())
-                    .and_then(parse_iso_timestamp);
-
-                // Check for thinking block (capabilityType=30 with thinking field)
-                if options.with_thinking {
-                    if let Some(thinking) = bubble.get("thinking").and_then(|t| t.as_object()) {
-                        if let Some(thinking_text) = thinking.get("text").and_then(|v| v.as_str()) {
-                            if !thinking_text.is_empty() {
-                                let thinking_duration =
-                                    bubble.get("thinkingDurationMs").and_then(|v| v.as_i64());
-
-                                messages.push(ChatMessage {
-                                    role: "thinking".to_string(),
-                                    content: thinking_text.to_string(),
-                                    timestamp,
-                                    thinking_duration_ms: thinking_duration,
-                                    tool_call: None,
-                                    model: None,
-                                    tokens: None,
-                                });
-                            }
-                        }
-                    }
-                }
-
-                // Check for tool call (capabilityType=15 with toolFormerData)
-                if options.with_tools {
-                    if let Some(tool_data) =
-                        bubble.get("toolFormerData").and_then(|t| t.as_object())
-                    {
-                        let tool_name = tool_data
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-
-                        let params = tool_data
-                            .get("params")
-                            .and_then(|v| v.as_str())
-                            .map(|s| truncate_str(s, 500));
-
-                        let result = tool_data
-                            .get("result")
-                            .and_then(|v| v.as_str())
-                            .map(|s| truncate_str(s, 1000));
-
-                        let status = tool_data
-                            .get("status")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-
-                        messages.push(ChatMessage {
-                            role: "tool".to_string(),
-                            content: format!("[{}]", tool_name),
-                            timestamp,
-                            thinking_duration_ms: None,
-                            tool_call: Some(ToolCall {
-                                name: tool_name,
-                                params,
-                                result,
-                                status,
-                            }),
-                            model: None,
-                            tokens: None,
-                        });
-
-                        continue; // Tool calls don't have regular text content
-                    }
-                }
-
-                // Regular message content
-                let text = bubble
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
+                    .unwrap_or("unknown")
                     .to_string();
 
-                if !text.is_empty() {
-                    let role = match bubble_type {
-                        1 => "user",
-                        2 => "assistant",
-                        _ => "unknown",
-                    };
+                let params = tool_data
+                    .get("params")
+                    .and_then(|v| v.as_str())
+                    .map(|s| truncate_str(s, 500));
 
-                    // Extract model info and tokens if requested
-                    let model = if options.with_stats {
-                        bubble
-                            .get("modelInfo")
-                            .and_then(|m| m.get("modelName"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                    } else {
-                        None
-                    };
+                let result = tool_data
+                    .get("result")
+                    .and_then(|v| v.as_str())
+                    .map(|s| truncate_str(s, 1000));
 
-                    let tokens = if options.with_stats {
-                        bubble.get("tokenCount").and_then(|tc| {
-                            let input = tc.get("inputTokens").and_then(|v| v.as_i64())?;
-                            let output = tc.get("outputTokens").and_then(|v| v.as_i64())?;
-                            if input > 0 || output > 0 {
-                                Some(TokenCount { input, output })
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        None
-                    };
+                let status = tool_data
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
-                    messages.push(ChatMessage {
-                        role: role.to_string(),
-                        content: text,
-                        timestamp,
-                        thinking_duration_ms: None,
-                        tool_call: None,
-                        model,
-                        tokens,
-                    });
-                }
+                messages.push(ChatMessage {
+                    role: "tool".to_string(),
+                    content: format!("[{}]", tool_name),
+                    timestamp,
+                    thinking_duration_ms: None,
+                    tool_call: Some(ToolCall {
+                        name: tool_name,
+                        params,
+                        result,
+                        status,
+                    }),
+                    model: None,
+                    tokens: None,
+                });
+
+                continue; // Tool calls don't have regular text content
+            }
+
+            // Regular message content
+            let text = bubble
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            if !text.is_empty() {
+                let role = match bubble_type {
+                    1 => "user",
+                    2 => "assistant",
+                    _ => "unknown",
+                };
+
+                // Extract model info and tokens if requested
+                let model = if options.with_stats {
+                    bubble
+                        .get("modelInfo")
+                        .and_then(|m| m.get("modelName"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                };
+
+                let tokens = if options.with_stats {
+                    bubble.get("tokenCount").and_then(|tc| {
+                        let input = tc.get("inputTokens").and_then(|v| v.as_i64())?;
+                        let output = tc.get("outputTokens").and_then(|v| v.as_i64())?;
+                        if input > 0 || output > 0 {
+                            Some(TokenCount { input, output })
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                };
+
+                messages.push(ChatMessage {
+                    role: role.to_string(),
+                    content: text,
+                    timestamp,
+                    thinking_duration_ms: None,
+                    tool_call: None,
+                    model,
+                    tokens,
+                });
             }
         }
     }
@@ -645,10 +640,10 @@ fn format_message_as_markdown(msg: &ChatMessage, heading: &str) -> String {
             }
 
             // Add token count if present
-            if let Some(ref tokens) = msg.tokens {
-                if tokens.input > 0 || tokens.output > 0 {
-                    md.push_str(&format!(" ({}↓ {}↑)", tokens.input, tokens.output));
-                }
+            if let Some(ref tokens) = msg.tokens
+                && (tokens.input > 0 || tokens.output > 0)
+            {
+                md.push_str(&format!(" ({}↓ {}↑)", tokens.input, tokens.output));
             }
 
             md.push_str("\n\n");

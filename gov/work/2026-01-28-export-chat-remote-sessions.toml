@@ -1,5 +1,6 @@
+#:schema ../schema/work.schema.json
+
 [govctl]
-schema = 1
 id = "WI-2026-01-28-001"
 title = "export-chat-remote-sessions"
 status = "done"

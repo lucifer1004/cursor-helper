@@ -1,0 +1,39 @@
+#:schema ../../../schema/clause.schema.json
+
+[govctl]
+id = "C-OMITTED"
+title = "Out of Scope"
+kind = "normative"
+status = "active"
+since = "0.1.0"
+
+[content]
+text = """
+The following are explicitly OUT OF SCOPE for cursor-helper:
+
+## Not Implemented
+
+- **Merge chat histories** — `cursor-helper merge` is not supported
+  - Chat sessions are tied to project UUIDs
+  - Merging would create semantic inconsistencies
+
+- **Import from external sources** — `cursor-helper import` is not supported
+  - Chat formats from other IDEs (Claude Code, Copilot, etc.) are out of scope
+  - User can use `export-chat` for portability, not import
+
+- **Cross-machine sync** — `cursor-helper sync` is not supported
+  - Project state is machine-specific (paths, timestamps)
+  - Use `backup`/`restore` for manual migration
+
+- **Cursor application modification** — We manipulate stored data only
+  - We do not modify Cursor's configuration files
+  - We do not restart or reconfigure Cursor
+
+- **IDE-agnostic project management** — This is a Cursor-specific tool
+  - Support for VS Code, VSCodium, or other editors is not planned
+
+## Not Planned
+
+- **Real-time sync with Cursor** — We read/write files, no IPC
+- **Plugin/extension architecture** — Single binary, no plugins
+- **GUI interface** — CLI only"""

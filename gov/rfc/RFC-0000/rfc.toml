@@ -1,0 +1,34 @@
+#:schema ../../schema/rfc.schema.json
+
+[govctl]
+id = "RFC-0000"
+title = "cursor-helper: CLI for Cursor IDE power users"
+version = "0.1.0"
+status = "normative"
+phase = "stable"
+owners = ["@Gabriel Wu"]
+created = "2026-01-19"
+updated = "2026-01-19"
+
+[[sections]]
+title = "Summary"
+
+[[sections]]
+title = "Specification"
+
+[[sections]]
+title = "Overview"
+clauses = [
+    "clauses/C-VISION.toml",
+    "clauses/C-SCOPE.toml",
+    "clauses/C-NONGOALS.toml",
+]
+
+[[sections]]
+title = "Design"
+clauses = ["clauses/C-PRINCIPLES.toml"]
+
+[[changelog]]
+version = "0.1.0"
+date = "2026-01-19"
+notes = "Initial draft"

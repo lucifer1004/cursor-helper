@@ -1,5 +1,6 @@
+#:schema ../schema/work.schema.json
+
 [govctl]
-schema = 1
 id = "WI-2026-01-19-002"
 title = "Implement RFC-0001 feature commands"
 status = "done"

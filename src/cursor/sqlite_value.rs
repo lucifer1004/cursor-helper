@@ -1,7 +1,7 @@
 //! Shared SQLite value helpers for Cursor-managed databases.
 
 use rusqlite::types::ValueRef;
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Utf8SqlValue {

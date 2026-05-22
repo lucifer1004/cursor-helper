@@ -325,10 +325,10 @@ fn session_matches_workspace(value: &Value, identity: &WorkspaceIdentity) -> boo
     let actual_id = value
         .pointer("/workspaceIdentifier/id")
         .and_then(|v| v.as_str());
-    if let (Some(expected_id), Some(actual_id)) = (identity.workspace_id.as_deref(), actual_id) {
-        if expected_id == actual_id {
-            return true;
-        }
+    if let (Some(expected_id), Some(actual_id)) = (identity.workspace_id.as_deref(), actual_id)
+        && expected_id == actual_id
+    {
+        return true;
     }
 
     let actual_uri = value
@@ -336,10 +336,9 @@ fn session_matches_workspace(value: &Value, identity: &WorkspaceIdentity) -> boo
         .and_then(|v| v.as_str());
     if let (Some(expected_uri), Some(actual_uri)) =
         (identity.folder_uri_normalized.as_deref(), actual_uri)
+        && expected_uri == normalize_uri_for_comparison(actual_uri)
     {
-        if expected_uri == normalize_uri_for_comparison(actual_uri) {
-            return true;
-        }
+        return true;
     }
 
     if identity.is_remote {
@@ -357,12 +356,10 @@ fn session_matches_workspace(value: &Value, identity: &WorkspaceIdentity) -> boo
             value
                 .pointer("/workspaceIdentifier/uri/path")
                 .and_then(|v| v.as_str()),
-        ) {
-            if expected_authority == actual_authority
-                && expected_path == normalize_workspace_path(actual_path)
-            {
-                return true;
-            }
+        ) && expected_authority == actual_authority
+            && expected_path == normalize_workspace_path(actual_path)
+        {
+            return true;
         }
 
         return false;
@@ -373,10 +370,9 @@ fn session_matches_workspace(value: &Value, identity: &WorkspaceIdentity) -> boo
         value
             .pointer("/workspaceIdentifier/uri/path")
             .and_then(|v| v.as_str()),
-    ) {
-        if expected_path == normalize_workspace_path(actual_path) {
-            return true;
-        }
+    ) && expected_path == normalize_workspace_path(actual_path)
+    {
+        return true;
     }
 
     false

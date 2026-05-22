@@ -1,5 +1,6 @@
+#:schema ../schema/work.schema.json
+
 [govctl]
-schema = 1
 id = "WI-2026-01-23-003"
 title = "fix-workspace-tests-windows"
 status = "done"

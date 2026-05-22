@@ -1,0 +1,67 @@
+#:schema ../../../schema/clause.schema.json
+
+[govctl]
+id = "C-SAFETY"
+title = "Safety and Data Integrity"
+kind = "normative"
+status = "active"
+since = "0.1.0"
+
+[content]
+text = """
+All commands that modify data MUST follow these safety rules:
+
+## Dry-Run by Default
+
+Destructive operations MUST default to dry-run mode:
+
+- `clean --dry-run` shows what would be deleted
+- No changes are made without explicit confirmation
+
+## Confirmation Required
+
+Before executing destructive operations:
+
+```
+$ cursor-helper clean
+Found 3 orphaned workspaces:
+  /Users/foo/.cursor/workspaceStorage/abc123
+  /Users/foo/.cursor/workspaceStorage/def456
+  /Users/foo/.cursor/workspaceStorage/ghi789
+
+Would delete 3 items. Use --yes to confirm.
+```
+
+The `--yes` flag bypasses the confirmation prompt.
+
+## Atomic Operations
+
+Commands that modify multiple files MUST be atomic where possible:
+
+- Use `rename` operations, not `copy-then-delete`
+- If atomicity is not possible, provide rollback information
+
+## Backup Before Modifications
+
+For `rename` and `clone`:
+
+1. Command MUST warn if target already exists
+2. Command SHOULD recommend `backup` first for important projects
+3. On conflict, abort with clear error rather than partial overwrite
+
+## Data Validation
+
+Before any write operation:
+
+1. Verify source data exists and is readable
+2. Verify target location is accessible
+3. Verify sufficient disk space for the operation
+4. On failure, leave source data unchanged
+
+## Error Messages
+
+Error messages MUST:
+
+- Be human-readable, not raw error codes
+- Suggest remediation when possible
+- Distinguish between "user error" (wrong input) and "system error" (IO failure)"""

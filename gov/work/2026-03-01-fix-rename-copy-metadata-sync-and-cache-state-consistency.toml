@@ -1,5 +1,6 @@
+#:schema ../schema/work.schema.json
+
 [govctl]
-schema = 1
 id = "WI-2026-03-01-001"
 title = "Fix rename --copy metadata sync and cache/state consistency"
 status = "done"

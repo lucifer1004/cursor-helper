@@ -1,8 +1,8 @@
 //! Backup command - Backup Cursor metadata for a project
 
-use anyhow::{bail, Context, Result};
-use flate2::write::GzEncoder;
+use anyhow::{Context, Result, bail};
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use owo_colors::OwoColorize;
 use std::fs::{self, File};
 use std::io::Write;
