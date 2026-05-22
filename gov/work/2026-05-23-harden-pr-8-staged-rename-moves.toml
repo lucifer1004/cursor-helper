@@ -1,0 +1,66 @@
+#:schema ../schema/work.schema.json
+
+[govctl]
+id = "WI-2026-05-23-001"
+title = "Harden PR #8 staged rename moves"
+status = "done"
+created = "2026-05-23"
+started = "2026-05-23"
+completed = "2026-05-23"
+refs = [
+    "RFC-0000",
+    "RFC-0001",
+]
+
+[content]
+description = "Complete PR #8 hardening for rename move/copy safety: update the actual MSRV declaration and README, use parcopy for cross-device staging copy, and remove panicable production code while preserving Cursor metadata safety guarantees covered by RFC-0000/RFC-0001."
+notes = [
+    "Actual MSRV was determined from dependency/build behavior, not the stale README claim; use Rust 1.88.0 as the locked release validation floor for this PR.",
+    "Production panic cleanup excludes #[cfg(test)] modules; test-only unwraps and panics are intentionally left outside this scope.",
+    "No RFC or ADR update was required because this hardens existing RFC-0000/RFC-0001 rename safety behavior without adding new command semantics.",
+]
+
+[[content.journal]]
+date = "2026-05-23"
+scope = "implementation"
+content = "Implemented PR #8 branch update in commit 7d9e99b: declared rust-version 1.88, updated README MSRV, introduced parcopy for cross-device staging copy, and removed production panicable code paths."
+
+[[content.journal]]
+date = "2026-05-23"
+scope = "validation"
+content = "Release validation passed locally: cargo +1.88.0 test --release --locked; cargo build --release; cargo test --release; cargo clippy --release --all-targets -- -D warnings; production-only clippy panic gate; git diff --check."
+
+[[content.journal]]
+date = "2026-05-23"
+scope = "github"
+content = "PR #8 was pushed to ZanzyTHEbar/fix/blob-state-safe-rename at 7d9e99b and GitHub checks passed: CI, pre-commit, macOS build, and Windows build."
+
+[[content.acceptance_criteria]]
+text = "Cross-device rename staging copy uses parcopy while preserving source-intact failure behavior"
+status = "done"
+category = "fixed"
+
+[[content.acceptance_criteria]]
+text = "Production code has no unwrap, expect, panic, or unreachable paths under release clippy gate"
+status = "done"
+category = "fixed"
+
+[[content.acceptance_criteria]]
+text = "Project MSRV is declared in Cargo.toml and documented in README as Rust 1.88"
+status = "done"
+category = "changed"
+
+[[content.acceptance_criteria]]
+text = "Release build, tests, and clippy pass locally"
+status = "done"
+category = "chore"
+
+[[content.acceptance_criteria]]
+text = "GitHub PR #8 checks pass"
+status = "done"
+category = "chore"
+
+[[content.acceptance_criteria]]
+text = "govctl check passes"
+status = "done"
+category = "chore"
