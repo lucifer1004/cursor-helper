@@ -177,7 +177,7 @@ fn find_orphaned_workspaces(workspace_storage_dir: &PathBuf) -> Result<Vec<Orpha
     }
 
     // Sort by size (largest first)
-    orphaned.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    orphaned.sort_by_key(|entry| std::cmp::Reverse(entry.size_bytes));
 
     Ok(orphaned)
 }

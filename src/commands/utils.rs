@@ -87,7 +87,13 @@ pub fn calculate_dir_size(path: &Path) -> Result<u64> {
 /// - Remote: if path doesn't exist locally, searches vscode-remote:// URLs for matching path component
 pub fn find_workspace_dir(project_path: &Path) -> Result<Option<std::path::PathBuf>> {
     let workspace_storage_dir = crate::config::workspace_storage_dir()?;
+    find_workspace_dir_in(&workspace_storage_dir, project_path)
+}
 
+fn find_workspace_dir_in(
+    workspace_storage_dir: &Path,
+    project_path: &Path,
+) -> Result<Option<std::path::PathBuf>> {
     if !workspace_storage_dir.exists() {
         return Ok(None);
     }
@@ -100,7 +106,7 @@ pub fn find_workspace_dir(project_path: &Path) -> Result<Option<std::path::PathB
         let project_uri_normalized = normalize_uri_for_comparison(&project_uri);
 
         // Scan workspace storage for matching local project
-        for entry in fs::read_dir(&workspace_storage_dir)?.flatten() {
+        for entry in fs::read_dir(workspace_storage_dir)?.flatten() {
             if !entry.file_type()?.is_dir() {
                 continue;
             }
@@ -119,7 +125,7 @@ pub fn find_workspace_dir(project_path: &Path) -> Result<Option<std::path::PathB
     let search_path = project_path.to_string_lossy();
     let search_path_normalized = search_path.trim_end_matches('/');
 
-    for entry in fs::read_dir(&workspace_storage_dir)?.flatten() {
+    for entry in fs::read_dir(workspace_storage_dir)?.flatten() {
         if !entry.file_type()?.is_dir() {
             continue;
         }
@@ -298,12 +304,7 @@ mod tests {
     #[test]
     fn test_find_workspace_dir_matches_multi_root_workspace_file() {
         let temp_dir = TempDir::new().unwrap();
-        let original = std::env::var_os("XDG_CONFIG_HOME");
-        let workspace_storage = temp_dir
-            .path()
-            .join("Cursor")
-            .join("User")
-            .join("workspaceStorage");
+        let workspace_storage = temp_dir.path().join("workspaceStorage");
         let workspace_dir = workspace_storage.join("abc123");
         let workspace_file = temp_dir.path().join("project.code-workspace");
 
@@ -318,14 +319,7 @@ mod tests {
         )
         .unwrap();
 
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-        let result = find_workspace_dir(&workspace_file);
-
-        if let Some(value) = original {
-            std::env::set_var("XDG_CONFIG_HOME", value);
-        } else {
-            std::env::remove_var("XDG_CONFIG_HOME");
-        }
+        let result = find_workspace_dir_in(&workspace_storage, &workspace_file);
 
         assert_eq!(result.unwrap(), Some(workspace_dir));
     }

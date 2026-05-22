@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_sort_by_chats_places_unknown_last() {
-        let mut projects = vec![
+        let mut projects = [
             Project {
                 folder_id: "a".to_string(),
                 path: PathBuf::from("/a"),

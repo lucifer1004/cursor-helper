@@ -877,9 +877,7 @@ fn move_or_merge_dir(src: &Path, dst: &Path, merge: bool) -> Result<()> {
 
     match fs::rename(src, dst) {
         Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::CrossesDevices => {
-            move_dir_cross_device(src, dst)
-        }
+        Err(err) if is_cross_device_error(&err) => move_dir_cross_device(src, dst),
         Err(err) => Err(err).with_context(|| {
             format!(
                 "Failed to atomically rename {} to {}",
@@ -887,6 +885,26 @@ fn move_or_merge_dir(src: &Path, dst: &Path, merge: bool) -> Result<()> {
                 dst.display()
             )
         }),
+    }
+}
+
+fn is_cross_device_error(err: &io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        // EXDEV: cross-device link.
+        err.raw_os_error() == Some(18)
+    }
+
+    #[cfg(windows)]
+    {
+        // ERROR_NOT_SAME_DEVICE.
+        err.raw_os_error() == Some(17)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = err;
+        false
     }
 }
 
@@ -1295,6 +1313,20 @@ mod tests {
         let path = PathBuf::from("/home/user/my project");
         let uri = path_to_file_uri(&path).unwrap();
         assert_eq!(uri, "file:///home/user/my%20project");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_is_cross_device_error_unix() {
+        assert!(is_cross_device_error(&io::Error::from_raw_os_error(18)));
+        assert!(!is_cross_device_error(&io::Error::from_raw_os_error(2)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_is_cross_device_error_windows() {
+        assert!(is_cross_device_error(&io::Error::from_raw_os_error(17)));
+        assert!(!is_cross_device_error(&io::Error::from_raw_os_error(2)));
     }
 
     #[cfg(unix)]

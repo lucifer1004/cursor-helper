@@ -261,6 +261,24 @@ pub fn execute_by_id(
     split: bool,
 ) -> Result<()> {
     let workspace_storage_dir = crate::config::workspace_storage_dir()?;
+    execute_by_id_from_storage(
+        &workspace_storage_dir,
+        workspace_id,
+        format,
+        output,
+        options,
+        split,
+    )
+}
+
+fn execute_by_id_from_storage(
+    workspace_storage_dir: &Path,
+    workspace_id: &str,
+    format: ExportFormat,
+    output: Option<&str>,
+    options: &ExportOptions,
+    split: bool,
+) -> Result<()> {
     let workspace_dir = workspace_storage_dir.join(workspace_id);
 
     if !workspace_dir.exists() {
@@ -371,7 +389,7 @@ fn extract_chat_sessions(
     }
 
     // Sort by creation time (newest first)
-    sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.created_at));
 
     Ok(sessions)
 }
@@ -970,12 +988,7 @@ mod tests {
     #[test]
     fn test_execute_by_id_exports_multi_root_workspace_label() {
         let temp_dir = TempDir::new().unwrap();
-        let original = std::env::var_os("XDG_CONFIG_HOME");
-        let workspace_storage = temp_dir
-            .path()
-            .join("Cursor")
-            .join("User")
-            .join("workspaceStorage");
+        let workspace_storage = temp_dir.path().join("workspaceStorage");
         let workspace_dir = workspace_storage.join("abc123");
         let workspace_file = temp_dir.path().join("dev.code-workspace");
         let output = temp_dir.path().join("export.json");
@@ -1007,22 +1020,16 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-        let result = execute_by_id(
+        execute_by_id_from_storage(
+            &workspace_storage,
             "abc123",
             ExportFormat::Json,
             Some(output.to_str().unwrap()),
             &ExportOptions::default(),
             false,
-        );
+        )
+        .unwrap();
 
-        if let Some(value) = original {
-            std::env::set_var("XDG_CONFIG_HOME", value);
-        } else {
-            std::env::remove_var("XDG_CONFIG_HOME");
-        }
-
-        result.unwrap();
         let export: ChatExport =
             serde_json::from_str(&fs::read_to_string(output).unwrap()).unwrap();
         assert_eq!(
