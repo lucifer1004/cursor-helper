@@ -188,7 +188,7 @@ pub fn update_global_state_db<P: AsRef<Path>>(
 
             let normalized = match value {
                 Utf8SqlValue::Text(_) => Utf8SqlValue::Text(normalized),
-                Utf8SqlValue::Blob(_) => Utf8SqlValue::Blob(normalized.into_bytes()),
+                Utf8SqlValue::Blob(_) => Utf8SqlValue::Blob(normalized),
             };
             pending_updates.push((rowid, normalized));
         }

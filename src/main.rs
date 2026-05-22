@@ -254,8 +254,7 @@ fn main() -> Result<()> {
                     anyhow::bail!("Either project_path or --workspace-id must be provided");
                 }
                 (Some(_), Some(_)) => {
-                    // This case is prevented by clap's conflicts_with
-                    unreachable!()
+                    anyhow::bail!("project_path and --workspace-id cannot be used together");
                 }
             }
         }

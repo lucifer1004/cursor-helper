@@ -6,16 +6,14 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Utf8SqlValue {
     Text(String),
-    Blob(Vec<u8>),
+    Blob(String),
 }
 
 impl Utf8SqlValue {
     pub fn as_str(&self) -> &str {
         match self {
             Self::Text(value) => value,
-            Self::Blob(bytes) => {
-                std::str::from_utf8(bytes).expect("Utf8SqlValue::Blob must contain valid UTF-8")
-            }
+            Self::Blob(value) => value,
         }
     }
 
@@ -24,7 +22,7 @@ impl Utf8SqlValue {
             ValueRef::Null => Ok(None),
             ValueRef::Text(bytes) => Ok(Some(Self::Text(std::str::from_utf8(bytes)?.to_string()))),
             ValueRef::Blob(bytes) => match std::str::from_utf8(bytes) {
-                Ok(_) => Ok(Some(Self::Blob(bytes.to_vec()))),
+                Ok(value) => Ok(Some(Self::Blob(value.to_string()))),
                 Err(_) => Ok(None),
             },
             ValueRef::Integer(_) | ValueRef::Real(_) => Ok(None),
@@ -39,7 +37,7 @@ impl Utf8SqlValue {
     ) -> rusqlite::Result<usize> {
         Ok(match self {
             Self::Text(value) => conn.execute(query, params![value, rowid])?,
-            Self::Blob(bytes) => conn.execute(query, params![bytes, rowid])?,
+            Self::Blob(value) => conn.execute(query, params![value.as_bytes(), rowid])?,
         })
     }
 }
@@ -121,7 +119,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(value, Utf8SqlValue::Blob(b"file:///workspace".to_vec()));
+        assert_eq!(value, Utf8SqlValue::Blob("file:///workspace".to_string()));
         assert_eq!(value.as_str(), "file:///workspace");
     }
 

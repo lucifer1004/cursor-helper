@@ -7,8 +7,9 @@
 //! - Terminal info
 
 use anyhow::{bail, Context, Result};
-use fs_extra::dir::{self, CopyOptions};
+use fs_extra::dir::{self, CopyOptions as FsCopyOptions};
 use owo_colors::OwoColorize;
+use parcopy::{copy_dir as parcopy_copy_dir, CopyOptions as ParcopyCopyOptions, OnConflict};
 use rusqlite::Connection;
 use std::fs;
 use std::io::{self, Write};
@@ -846,7 +847,7 @@ fn copy_or_move(src: &Path, dst: &Path, copy_mode: bool, dry_run: bool) -> Resul
         return Ok(());
     }
 
-    let options = CopyOptions::new().copy_inside(true).skip_exist(merge);
+    let options = FsCopyOptions::new().copy_inside(true).skip_exist(merge);
 
     let action = if copy_mode { "copy" } else { "move" };
     let result: Result<()> = if copy_mode {
@@ -925,20 +926,20 @@ fn ensure_real_directory(path: &Path, label: &str) -> Result<()> {
 }
 
 fn move_dir_cross_device(src: &Path, dst: &Path) -> Result<()> {
-    move_dir_cross_device_with(src, dst, &mut |_, _| Ok(()))
+    move_dir_cross_device_with_copy(src, dst, &mut copy_dir_to_staging)
 }
 
-fn move_dir_cross_device_with<F>(src: &Path, dst: &Path, before_copy: &mut F) -> Result<()>
+fn move_dir_cross_device_with_copy<F>(src: &Path, dst: &Path, copy_to_staging: &mut F) -> Result<()>
 where
     F: FnMut(&Path, &Path) -> Result<()>,
 {
-    move_dir_cross_device_with_hooks(src, dst, before_copy, &mut |_| Ok(()))
+    move_dir_cross_device_with_hooks(src, dst, copy_to_staging, &mut |_| Ok(()))
 }
 
 fn move_dir_cross_device_with_hooks<F, R>(
     src: &Path,
     dst: &Path,
-    before_copy: &mut F,
+    copy_to_staging: &mut F,
     before_remove: &mut R,
 ) -> Result<()>
 where
@@ -959,7 +960,7 @@ where
         })?;
     let staging_path = staging_dir.path().join("payload");
 
-    copy_path_no_follow_symlinks_with(src, &staging_path, before_copy)?;
+    copy_to_staging(src, &staging_path)?;
     if let Err(err) = remove_path_no_follow_symlinks_with(src, before_remove) {
         restore_directory_from_staging(&staging_path, src).with_context(|| {
             format!(
@@ -995,6 +996,19 @@ where
     }
 
     Ok(())
+}
+
+fn copy_dir_to_staging(src: &Path, staging_path: &Path) -> Result<()> {
+    let options = ParcopyCopyOptions::default().with_on_conflict(OnConflict::Error);
+    parcopy_copy_dir(src, staging_path, &options)
+        .map(|_| ())
+        .with_context(|| {
+            format!(
+                "Failed to stage copy {} to {}",
+                src.display(),
+                staging_path.display()
+            )
+        })
 }
 
 fn move_dir_merge(src: &Path, dst: &Path) -> Result<()> {
@@ -1416,21 +1430,9 @@ mod tests {
         fs::write(src.join("one.txt"), "one\n").unwrap();
         fs::write(src.join("two.txt"), "two\n").unwrap();
 
-        let mut seen_files = 0usize;
-        let err = move_dir_cross_device_with(&src, &dst, &mut |candidate, _| {
-            if fs::symlink_metadata(candidate)
-                .unwrap()
-                .file_type()
-                .is_file()
-            {
-                seen_files += 1;
-                if seen_files == 2 {
-                    bail!("injected copy failure");
-                }
-            }
-            Ok(())
-        })
-        .unwrap_err();
+        let err =
+            move_dir_cross_device_with_copy(&src, &dst, &mut |_, _| bail!("injected copy failure"))
+                .unwrap_err();
 
         assert!(err.to_string().contains("injected copy failure"));
         assert!(src.exists());
@@ -1449,8 +1451,11 @@ mod tests {
         fs::write(src.join("two.txt"), "two\n").unwrap();
 
         let mut removed_files = 0usize;
-        let err =
-            move_dir_cross_device_with_hooks(&src, &dst, &mut |_, _| Ok(()), &mut |candidate| {
+        let err = move_dir_cross_device_with_hooks(
+            &src,
+            &dst,
+            &mut copy_dir_to_staging,
+            &mut |candidate| {
                 if fs::symlink_metadata(candidate)
                     .unwrap()
                     .file_type()
@@ -1462,8 +1467,9 @@ mod tests {
                     }
                 }
                 Ok(())
-            })
-            .unwrap_err();
+            },
+        )
+        .unwrap_err();
 
         assert_eq!(removed_files, 2);
         assert!(!err.to_string().is_empty());
