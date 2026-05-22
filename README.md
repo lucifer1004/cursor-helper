@@ -33,7 +33,7 @@ cd cursor-helper
 cargo install --path .
 ```
 
-Requires Rust 1.70+. Works on macOS, Linux, and Windows.
+Requires Rust 1.88+. Works on macOS, Linux, and Windows.
 
 Pre-built binaries for major platforms are available on the [Releases](https://github.com/lucifer1004/cursor-helper/releases) page.
 

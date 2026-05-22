@@ -2,6 +2,7 @@
 name = "cursor-helper"
 version = "0.2.2"
 edition = "2021"
+rust-version = "1.88"
 description = "CLI helper for Cursor IDE operations not exposed in the UI"
 license = "MIT"
 repository = "https://github.com/lucifer1004/cursor-helper"
@@ -20,6 +21,7 @@ md5 = "0.8"
 # Paths and directories
 dirs = "6"
 fs_extra = "1"
+parcopy = "0.3.2"
 
 # Error handling
 anyhow = "1"
